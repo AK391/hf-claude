@@ -1,6 +1,6 @@
 # hf-claude
 
-extension for `hf` to launch Claude COde with Hugging Face Inference Providers
+extension for `hf` to launch Claude Code with Hugging Face Inference Providers
 
 It lets you pick:
 - model (from `https://router.huggingface.co/v1/models`)
@@ -32,7 +32,7 @@ hf claude
 hf extension exec claude
 ```
 
-Forward extra args to Claude:
+Forward extra args to Claude Code:
 
 ```bash
 hf claude --help
