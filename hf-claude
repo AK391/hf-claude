@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Claude launcher for Hugging Face Router with model/provider selection via fzf
+# Required env var: HF_TOKEN
+
+set -euo pipefail
+
+HF_TOKEN="${HF_TOKEN:-}"
+
+if [[ -z "$HF_TOKEN" ]]; then
+  echo "Error: HF_TOKEN not set. Export your Hugging Face token:"
+  echo "  export HF_TOKEN='hf_...'"
+  exit 1
+fi
+
+for cmd in curl jq fzf claude; do
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    echo "Error: '$cmd' is required but not found in PATH."
+    exit 1
+  fi
+done
+
+MODEL_DATA="$(curl -fsS "https://router.huggingface.co/v1/models" \
+  -H "Authorization: Bearer ${HF_TOKEN}")"
+
+MODEL="$(echo "$MODEL_DATA" | jq -r '.data[].id' | fzf \
+  --prompt="HF Model: " \
+  --height=50% \
+  --reverse \
+  --header="Hugging Face Router - Select Model")"
+
+if [[ -z "$MODEL" ]]; then
+  echo "No model selected"
+  exit 1
+fi
+
+PROVIDER="$(
+  {
+    echo "auto"
+    echo "$MODEL_DATA" | jq -r --arg model "$MODEL" '.data[] | select(.id == $model) | .providers[].provider'
+  } | awk '!seen[$0]++' | fzf \
+      --prompt="Provider: " \
+      --height=20% \
+      --reverse \
+      --header="Select Provider for ${MODEL} (auto = no suffix)"
+)"
+
+if [[ -z "$PROVIDER" ]]; then
+  echo "No provider selected"
+  exit 1
+fi
+
+if [[ "$PROVIDER" == "auto" ]]; then
+  MODEL_STRING="$MODEL"
+else
+  MODEL_STRING="${MODEL}:${PROVIDER}"
+fi
+
+echo "→ claude @ ${MODEL_STRING}" >&2
+
+export ANTHROPIC_AUTH_TOKEN="$HF_TOKEN"
+export ANTHROPIC_BASE_URL="https://router.huggingface.co"
+export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL_STRING"
+export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL_STRING"
+export ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL_STRING"
+
+exec claude --model "$MODEL_STRING" "$@"

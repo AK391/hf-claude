@@ -1,0 +1,46 @@
+# hf-claude
+
+extension for `hf` to launch Claude COde with Hugging Face Inference Providers
+
+It lets you pick:
+- model (from `https://router.huggingface.co/v1/models`)
+- provider (`auto` or a concrete provider for the selected model)
+
+Then it runs `claude --model <model[:provider]>` with router env vars preconfigured.
+
+## Requirements
+
+- `claude` CLI installed
+- `curl`, `jq`, `fzf`, `bash`
+- `HF_TOKEN` set:
+
+```bash
+export HF_TOKEN='hf_...'
+```
+
+## Files
+
+- `hf-claude`: installable executable expected by `hf ext install`
+- `claude`: same script content (convenience copy)
+- `manifest.json`: metadata (informational)
+
+## Install
+
+```bash
+hf extension install hanouticelina/hf-claude
+```
+
+## Run
+
+```bash
+hf claude
+# or
+hf extension exec claude
+```
+
+Forward extra args to Claude:
+
+```bash
+hf claude --help
+hf extension exec claude -- --help
+```

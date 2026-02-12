@@ -1,0 +1,17 @@
+{
+  "name": "hf-claude",
+  "description": "Launch Claude Code with Hugging Face Inference Providers",
+  "entrypoint": "hf-claude",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "requires": [
+    "bash",
+    "curl",
+    "jq",
+    "fzf",
+    "claude"
+  ],
+  "env": {
+    "HF_TOKEN": "Hugging Face user token used for router auth"
+  }
+}
