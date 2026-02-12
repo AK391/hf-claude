@@ -57,6 +57,7 @@ fi
 
 echo "→ claude @ ${MODEL_STRING}" >&2
 
+export ANTHROPIC_API_KEY="$HF_TOKEN"
 export ANTHROPIC_AUTH_TOKEN="$HF_TOKEN"
 export ANTHROPIC_BASE_URL="https://router.huggingface.co"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL_STRING"
