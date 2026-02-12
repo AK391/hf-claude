@@ -10,7 +10,7 @@ Then it runs `claude --model <model[:provider]>` with router env vars preconfigu
 
 ## Requirements
 
-- `claude` CLI installed
+- Claude Code CLI Installed
 - `curl`, `jq`, `fzf`, `bash`
 - `HF_TOKEN` set:
 
