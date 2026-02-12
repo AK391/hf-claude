@@ -18,12 +18,6 @@ Then it runs `claude --model <model[:provider]>` with router env vars preconfigu
 export HF_TOKEN='hf_...'
 ```
 
-## Files
-
-- `hf-claude`: installable executable expected by `hf ext install`
-- `claude`: same script content (convenience copy)
-- `manifest.json`: metadata (informational)
-
 ## Install
 
 ```bash
