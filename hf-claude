@@ -63,13 +63,8 @@ fi
 
 echo "→ claude @ ${MODEL_STRING}" >&2
 
-if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-  export ANTHROPIC_API_KEY="$HF_TOKEN"
-elif [[ -n "${ANTHROPIC_AUTH_TOKEN:-}" ]]; then
-  export ANTHROPIC_AUTH_TOKEN="$HF_TOKEN"
-else
-  export ANTHROPIC_AUTH_TOKEN="$HF_TOKEN"
-fi
+export ANTHROPIC_API_KEY="$HF_TOKEN"
+export ANTHROPIC_AUTH_TOKEN="$HF_TOKEN"
 export ANTHROPIC_BASE_URL="https://router.huggingface.co"
 export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL_STRING"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL_STRING"
