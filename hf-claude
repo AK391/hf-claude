@@ -97,7 +97,8 @@ _arrow_menu() {
 
     IFS= read -rsn1 key </dev/tty || { sel=-1; break; }
     if [[ $key == $'\e' ]]; then
-      read -rsn2 -t 0.05 rest </dev/tty
+      # integer timeout: macOS stock bash 3.2 rejects fractional -t
+      read -rsn2 -t 1 rest </dev/tty
       case "$rest" in
         '[A') (( sel > 0 ))     && sel=$(( sel - 1 )) ;;
         '[B') (( sel < n - 1 )) && sel=$(( sel + 1 )) ;;
