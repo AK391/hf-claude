@@ -16,7 +16,8 @@ Then it runs `claude --model <model[:provider]>` with the required env vars prec
 - A Hugging Face token, via either:
 
 ```bash
-hf auth login        # recommended — the launcher reads this token automatically
+curl -LsSf https://hf.co/cli/install.sh | bash
+hf auth login        
 # or
 export HF_TOKEN='hf_...'
 ```
@@ -24,7 +25,7 @@ export HF_TOKEN='hf_...'
 ## Install
 
 ```bash
-hf extensions install hanouticelina/hf-claude
+hf extensions install hanouticelina/hf-claude (--force to reinstall the extension 
 ```
 
 ## Run
