@@ -8,10 +8,9 @@
     "bash",
     "curl",
     "jq",
-    "fzf",
     "claude"
   ],
   "env": {
-    "HF_TOKEN": "Hugging Face user token used for router auth"
+    "HF_TOKEN": "Hugging Face user token used to authenticate with Inference Providers"
   }
 }

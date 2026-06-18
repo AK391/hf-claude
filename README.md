@@ -1,20 +1,23 @@
 # hf-claude
 
-extension for `hf` to launch Claude Code with Hugging Face Inference Providers
+extension for `hf` to launch Claude Code with [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers/en/index)
 
 It lets you pick:
 - model (from `https://router.huggingface.co/v1/models`)
 - provider (`auto` or a concrete provider for the selected model)
 
-Then it runs `claude --model <model[:provider]>` with router env vars preconfigured.
+Then it runs `claude --model <model[:provider]>` with the required env vars preconfigured.
 
 ## Requirements
 
-- Claude Code CLI Installed
-- `curl`, `jq`, `fzf`, `bash`
-- `HF_TOKEN` set:
+- Claude Code CLI installed
+- `curl`, `jq`, `bash`
+- [`fzf`](https://github.com/junegunn/fzf#installation) *(optional)* — enables fuzzy model/provider search; without it the launcher falls back to an arrow-key menu (↑/↓ to move, Enter to select)
+- A Hugging Face token, via either:
 
 ```bash
+hf auth login        # recommended — the launcher reads this token automatically
+# or
 export HF_TOKEN='hf_...'
 ```
 

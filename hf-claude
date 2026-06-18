@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Claude launcher for Hugging Face Router with model/provider selection via fzf
-# Required env var: HF_TOKEN
+# Claude launcher for Hugging Face Inference Providers with model/provider selection.
+# Auth: uses $HF_TOKEN if set, else the token saved by `hf auth login`.
+# fzf is used for selection when available, with an arrow-key menu fallback.
 
 set -euo pipefail
 
@@ -12,27 +13,124 @@ done
 
 HF_TOKEN="${HF_TOKEN:-}"
 
+# Fall back to the token saved by `hf auth login` when HF_TOKEN isn't set.
+# `hf auth token` prints the active token and honors `hf auth switch`.
+if [[ -z "$HF_TOKEN" ]] && command -v hf >/dev/null 2>&1; then
+  HF_TOKEN="$(hf auth token 2>/dev/null || true)"
+fi
+
 if [[ -z "$HF_TOKEN" ]]; then
-  echo "Error: HF_TOKEN not set. Export your Hugging Face token:"
-  echo "  export HF_TOKEN='hf_...'"
+  echo "Error: no Hugging Face token found." >&2
+  echo "Log in with:        hf auth login" >&2
+  echo "or export a token:  export HF_TOKEN='hf_...'" >&2
   exit 1
 fi
 
-for cmd in curl jq fzf claude; do
+for cmd in curl jq claude; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
-    echo "Error: '$cmd' is required but not found in PATH."
+    echo "Error: '$cmd' is required but not found in PATH." >&2
     exit 1
   fi
 done
 
+# Pick one line from stdin. Uses fzf when installed; otherwise falls back to a
+# pure-bash arrow-key menu so fzf stays optional.
+pick() {
+  local prompt="$1" header="$2"
+  if command -v fzf >/dev/null 2>&1; then
+    fzf --prompt="$prompt" --height=50% --reverse --header="$header"
+    return
+  fi
+  _arrow_menu "$header"
+}
+
+# Arrow-key selection menu (no fzf needed). Reads candidate lines from stdin,
+# draws a scrolling list on the terminal (stderr) starting at the top, and
+# prints the chosen line to stdout. Up/Down or j/k move, g/G or Home/End jump
+# to ends, Enter selects, q/Esc/Ctrl-C cancel (prints nothing).
+_arrow_menu() {
+  local header="$1"
+  local items=() line
+  while IFS= read -r line; do items+=("$line"); done
+  set +e  # interactive reads/arithmetic below may "fail" benignly under set -e
+  local n=${#items[@]}
+  (( n == 0 )) && return 0
+  if [[ ! -t 2 || ! -r /dev/tty ]]; then
+    echo "no-fzf menu needs an interactive terminal; install fzf for selection" >&2
+    return 0
+  fi
+
+  local size rows cols
+  size=$(stty size </dev/tty 2>/dev/null)
+  rows=${size%% *}; cols=${size##* }
+  [[ $rows =~ ^[0-9]+$ ]] || rows=24
+  [[ $cols =~ ^[0-9]+$ ]] || cols=80
+  local vh=$(( rows - 4 )) maxw=$(( cols - 4 ))
+  (( vh < 1 ))   && vh=1
+  (( vh > n ))   && vh=$n
+  (( maxw < 8 )) && maxw=8
+
+  local saved; saved=$(stty -g </dev/tty 2>/dev/null)
+  trap 'stty "$saved" </dev/tty 2>/dev/null; printf "\e[?25h" >&2' EXIT
+  trap 'stty "$saved" </dev/tty 2>/dev/null; printf "\e[?25h\n" >&2; exit 130' INT TERM
+  stty -echo -icanon </dev/tty 2>/dev/null
+  printf '\e[?25l' >&2   # hide cursor
+
+  local sel=0 top=0 drawn=0 key rest i disp buf
+  while true; do
+    (( sel < top ))       && top=$sel
+    (( sel >= top + vh )) && top=$(( sel - vh + 1 ))
+    buf=""
+    (( drawn )) && buf+=$'\e['"$(( vh + 2 ))"'A'
+    drawn=1
+    buf+=$'\r\e[2K\e[1m'"$header"$'\e[0m\n'
+    for (( i = top; i < top + vh; i++ )); do
+      disp=${items[i]:0:maxw}
+      if (( i == sel )); then
+        buf+=$'\r\e[2K\e[7m> '"$disp"$' \e[0m\n'
+      else
+        buf+=$'\r\e[2K  '"$disp"$'\n'
+      fi
+    done
+    buf+=$'\r\e[2K\e[2m'"  [$(( sel + 1 ))/$n]  up/down move - enter select - q quit"$'\e[0m\n'
+    printf '%s' "$buf" >&2
+
+    IFS= read -rsn1 key </dev/tty || { sel=-1; break; }
+    if [[ $key == $'\e' ]]; then
+      read -rsn2 -t 0.05 rest </dev/tty
+      case "$rest" in
+        '[A') (( sel > 0 ))     && sel=$(( sel - 1 )) ;;
+        '[B') (( sel < n - 1 )) && sel=$(( sel + 1 )) ;;
+        '[H') sel=0 ;;
+        '[F') sel=$(( n - 1 )) ;;
+        '')   sel=-1; break ;;          # bare Esc = cancel
+      esac
+    else
+      case "$key" in
+        k) (( sel > 0 ))     && sel=$(( sel - 1 )) ;;
+        j) (( sel < n - 1 )) && sel=$(( sel + 1 )) ;;
+        g) sel=0 ;;
+        G) sel=$(( n - 1 )) ;;
+        q|Q)            sel=-1; break ;;
+        ''|$'\n'|$'\r') break ;;        # Enter = select current
+      esac
+    fi
+  done
+
+  printf '\e[%dA\r\e[J' "$(( vh + 2 ))" >&2   # erase the menu block
+  stty "$saved" </dev/tty 2>/dev/null
+  printf '\e[?25h' >&2
+  trap - EXIT INT TERM
+
+  (( sel < 0 )) && return 0
+  printf '%s\n' "${items[sel]}"
+}
+
 MODEL_DATA="$(curl -fsS "https://router.huggingface.co/v1/models" \
   -H "Authorization: Bearer ${HF_TOKEN}")"
 
-MODEL="$(echo "$MODEL_DATA" | jq -r '.data[].id' | fzf \
-  --prompt="HF Model: " \
-  --height=50% \
-  --reverse \
-  --header="Hugging Face Router - Select Model")"
+MODEL="$(echo "$MODEL_DATA" | jq -r '.data[].id' \
+  | pick "Model: " "Hugging Face Inference Providers - Select Model")"
 
 if [[ -z "$MODEL" ]]; then
   echo "No model selected"
@@ -43,11 +141,8 @@ PROVIDER="$(
   {
     echo "auto"
     echo "$MODEL_DATA" | jq -r --arg model "$MODEL" '.data[] | select(.id == $model) | .providers[].provider'
-  } | awk '!seen[$0]++' | fzf \
-      --prompt="Provider: " \
-      --height=20% \
-      --reverse \
-      --header="Select Provider for ${MODEL} (auto = no suffix)"
+  } | awk '!seen[$0]++' \
+    | pick "Provider: " "Select Provider for ${MODEL} (auto = no suffix)"
 )"
 
 if [[ -z "$PROVIDER" ]]; then
