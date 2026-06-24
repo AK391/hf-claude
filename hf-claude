@@ -5,9 +5,24 @@
 
 set -euo pipefail
 
-for arg in "$@"; do
-  case "$arg" in
+# Parse wrapper flags, forwarding everything else to `claude`.
+#   --bill-to <org> / --bill-to=<org>  bill inference to a HF org (X-HF-Bill-To)
+# Falls back to $HF_BILL_TO when the flag is absent.
+BILL_TO="${HF_BILL_TO:-}"
+CLAUDE_ARGS=()
+while [[ $# -gt 0 ]]; do
+  case "$1" in
     -h|--help) exec claude --help ;;
+    --bill-to)
+      BILL_TO="${2:-}"
+      if [[ -z "$BILL_TO" ]]; then
+        echo "Error: --bill-to requires an organization name." >&2
+        exit 1
+      fi
+      shift 2
+      ;;
+    --bill-to=*) BILL_TO="${1#*=}"; shift ;;
+    *) CLAUDE_ARGS+=("$1"); shift ;;
   esac
 done
 
@@ -166,4 +181,16 @@ export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL_STRING"
 export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL_STRING"
 export ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL_STRING"
 
-exec claude --model "$MODEL_STRING" "$@"
+# Bill inference to a HF org via the router's X-HF-Bill-To header. Appended so
+# any user-supplied ANTHROPIC_CUSTOM_HEADERS are preserved.
+if [[ -n "$BILL_TO" ]]; then
+  if [[ -n "${ANTHROPIC_CUSTOM_HEADERS:-}" ]]; then
+    export ANTHROPIC_CUSTOM_HEADERS="${ANTHROPIC_CUSTOM_HEADERS}
+X-HF-Bill-To: ${BILL_TO}"
+  else
+    export ANTHROPIC_CUSTOM_HEADERS="X-HF-Bill-To: ${BILL_TO}"
+  fi
+  echo "→ billing to org: ${BILL_TO}" >&2
+fi
+
+exec claude --model "$MODEL_STRING" ${CLAUDE_ARGS[@]+"${CLAUDE_ARGS[@]}"}
