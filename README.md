@@ -43,3 +43,20 @@ Forward extra args to Claude Code:
 hf claude --help
 hf extensions exec claude -- --help
 ```
+
+## Billing to an organization
+
+To bill inference usage to a Hugging Face organization instead of your personal
+account, pass `--bill-to` (you must have Write privileges in the org):
+
+```bash
+hf claude --bill-to your-org-name
+```
+
+This sets the router's `X-HF-Bill-To` header (via `ANTHROPIC_CUSTOM_HEADERS`) on
+every request. You can also set it via the `HF_BILL_TO` environment variable:
+
+```bash
+export HF_BILL_TO=your-org-name
+hf claude
+```
