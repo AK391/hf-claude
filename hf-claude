@@ -7,8 +7,11 @@ set -euo pipefail
 
 # Parse wrapper flags, forwarding everything else to `claude`.
 #   --bill-to <org> / --bill-to=<org>  bill inference to a HF org (X-HF-Bill-To)
+#   --conductor                        auto-select the huggingface/conductor
+#                                      resilient orchestrator (skip the menu)
 # Falls back to $HF_BILL_TO when the flag is absent.
 BILL_TO="${HF_BILL_TO:-}"
+USE_CONDUCTOR=0
 CLAUDE_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -22,6 +25,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --bill-to=*) BILL_TO="${1#*=}"; shift ;;
+    --conductor) USE_CONDUCTOR=1; shift ;;
     *) CLAUDE_ARGS+=("$1"); shift ;;
   esac
 done
@@ -145,41 +149,105 @@ _arrow_menu() {
 MODEL_DATA="$(curl -fsS "https://router.huggingface.co/v1/models" \
   -H "Authorization: Bearer ${HF_TOKEN}")"
 
-MODEL="$(echo "$MODEL_DATA" | jq -r '.data[].id' \
-  | pick "Model: " "Hugging Face Inference Providers - Select Model")"
+# huggingface/conductor is a local resilient orchestrator: it failovers across
+# providers (then an equivalent model class) instead of letting Claude Code hang
+# on a broken endpoint. It runs as a tiny local proxy; selecting it from the
+# menu launches the proxy and points Claude Code at it. See hf_conductor_proxy.py.
+CONDUCTOR_ID="huggingface/conductor"
+CONDUCTOR_PROXY="${HF_CONDUCTOR_PROXY:-}"
+
+_find_conductor_proxy() {
+  # Explicit override wins; otherwise look next to this script, then on PATH.
+  if [[ -n "$CONDUCTOR_PROXY" ]]; then
+    [[ -f "$CONDUCTOR_PROXY" ]] && { echo "$CONDUCTOR_PROXY"; return 0; }
+    return 1
+  fi
+  local here
+  here="$(cd "$(dirname "$0")" && pwd)/hf_conductor_proxy.py"
+  [[ -f "$here" ]] && { echo "$here"; return 0; }
+  command -v hf_conductor_proxy.py >/dev/null 2>&1 && { command -v hf_conductor_proxy.py; return 0; }
+  return 1
+}
+
+if [[ "$USE_CONDUCTOR" == "1" ]]; then
+  MODEL="$CONDUCTOR_ID"
+else
+  MODEL="$(printf '%s\n' "$CONDUCTOR_ID" \
+    | cat - <(echo "$MODEL_DATA" | jq -r '.data[].id') \
+    | pick "Model: " "Hugging Face Inference Providers - Select Model")"
+fi
 
 if [[ -z "$MODEL" ]]; then
   echo "No model selected"
   exit 1
 fi
 
-PROVIDER="$(
-  {
-    echo "auto"
-    echo "$MODEL_DATA" | jq -r --arg model "$MODEL" '.data[] | select(.id == $model) | .providers[].provider'
-  } | awk '!seen[$0]++' \
-    | pick "Provider: " "Select Provider for ${MODEL} (auto = no suffix)"
-)"
+if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
+  PROXY_SCRIPT="$(_find_conductor_proxy || true)"
+  if [[ -z "$PROXY_SCRIPT" ]]; then
+    echo "Error: selected huggingface/conductor but hf_conductor_proxy.py was not found." >&2
+    echo "       Set HF_CONDUCTOR_PROXY=/path/to/hf_conductor_proxy.py or install it next to this script." >&2
+    exit 1
+  fi
+  command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required to run the conductor proxy." >&2; exit 1; }
 
-if [[ -z "$PROVIDER" ]]; then
-  echo "No provider selected"
-  exit 1
-fi
-
-if [[ "$PROVIDER" == "auto" ]]; then
-  MODEL_STRING="$MODEL"
+  PORT="${HF_CONDUCTOR_PORT:-8080}"
+  # Reuse a running proxy on the port if one is already listening.
+  if ! curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    echo "→ starting huggingface/conductor proxy on 127.0.0.1:${PORT}" >&2
+    python3 "$PROXY_SCRIPT" >/tmp/hf-conductor.log 2>&1 &
+    CONDUCTOR_PID=$!
+    # Wait until it accepts /health, but give up after ~10s.
+    for _ in $(seq 1 100); do
+      if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then break; fi
+      kill -0 "$CONDUCTOR_PID" 2>/dev/null || { echo "Error: conductor proxy exited during startup. See /tmp/hf-conductor.log" >&2; exit 1; }
+      sleep 0.1
+    done
+  fi
+  curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1 || {
+    echo "Error: conductor proxy is not responding on 127.0.0.1:${PORT}." >&2
+    echo "       Check /tmp/hf-conductor.log or set HF_CONDUCTOR_PORT." >&2
+    exit 1
+  }
+  MODEL_STRING="$CONDUCTOR_ID"
+  PROVIDER="conductor"
 else
-  MODEL_STRING="${MODEL}:${PROVIDER}"
+  PROVIDER="$(
+    {
+      echo "auto"
+      echo "$MODEL_DATA" | jq -r --arg model "$MODEL" '.data[] | select(.id == $model) | .providers[].provider'
+    } | awk '!seen[$0]++' \
+      | pick "Provider: " "Select Provider for ${MODEL} (auto = no suffix)"
+  )"
+
+  if [[ -z "$PROVIDER" ]]; then
+    echo "No provider selected"
+    exit 1
+  fi
+
+  if [[ "$PROVIDER" == "auto" ]]; then
+    MODEL_STRING="$MODEL"
+  else
+    MODEL_STRING="${MODEL}:${PROVIDER}"
+  fi
 fi
 
 echo "→ claude @ ${MODEL_STRING}" >&2
 
 export ANTHROPIC_API_KEY="$HF_TOKEN"
 export ANTHROPIC_AUTH_TOKEN="$HF_TOKEN"
-export ANTHROPIC_BASE_URL="https://router.huggingface.co"
-export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL_STRING"
-export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL_STRING"
-export ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL_STRING"
+if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
+  # Route Claude Code through the local conductor proxy instead of the router.
+  export ANTHROPIC_BASE_URL="http://127.0.0.1:${PORT}"
+  export ANTHROPIC_DEFAULT_SONNET_MODEL="$CONDUCTOR_ID"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="$CONDUCTOR_ID"
+  export ANTHROPIC_DEFAULT_OPUS_MODEL="$CONDUCTOR_ID"
+else
+  export ANTHROPIC_BASE_URL="https://router.huggingface.co"
+  export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL_STRING"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="$MODEL_STRING"
+  export ANTHROPIC_DEFAULT_OPUS_MODEL="$MODEL_STRING"
+fi
 
 # Bill inference to a HF org via the router's X-HF-Bill-To header. Appended so
 # any user-supplied ANTHROPIC_CUSTOM_HEADERS are preserved.
