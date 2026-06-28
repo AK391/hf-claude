@@ -61,21 +61,25 @@ export HF_BILL_TO=your-org-name
 hf claude
 ```
 
-## Resilient orchestration with `huggingface/conductor`
+## `huggingface/conductor` — OpenRouter Fusion-style orchestrator
 
-When an underlying provider drops, rate-limits, or returns a gateway error,
-Claude Code retries the same endpoint up to 10 times and then hangs — because
-the router returns a generic HTML error page instead of a JSON error the client
-can act on.
+`huggingface/conductor` is an orchestrator option at the top of the model menu
+that implements the OpenRouter Fusion pattern: a prompt is fanned out to a
+panel of cheap/fast models in parallel, and a frontier **judge** model
+synthesizes their outputs into a single streamed response. The idea is many
+inexpensive perspectives, one high-quality synthesis — often better than any
+single model in the panel, at a fraction of a frontier-model's token cost.
 
-`huggingface/conductor` is a resilient orchestrator option that appears at the
-top of the model menu. Selecting it transparently failovers across:
+It runs as a tiny local proxy bundled with this extension.
 
-1. all providers for a base model (e.g. `zai-org/GLM-5.2`),
-2. an equivalent model class (e.g. `MiniMaxAI/MiniMax-M3`) and *its* providers,
+### How it works
 
-so a transient upstream failure is handled under the hood instead of hanging
-your session. It runs as a tiny local proxy bundled with this extension.
+1. Claude Code sends a request to `huggingface/conductor`.
+2. The proxy fans the prompt out to every model in the panel **in parallel**
+   (non-streaming, short max-tokens each).
+3. Once the panel responds, a judge model receives all the answers plus the
+   original request and synthesizes a single unified response.
+4. That synthesized response is streamed back to Claude Code.
 
 ### Requirements
 
@@ -91,20 +95,25 @@ hf claude --conductor
 ```
 
 The launcher starts the local proxy (default `127.0.0.1:8080`) — reusing one if
-already running — and points Claude Code at it. Failover logs go to
+already running — and points Claude Code at it. Logs go to
 `/tmp/hf-conductor.log`.
 
 ### Configuration (environment variables)
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HF_CONDUCTOR_BASE_MODEL` | `zai-org/GLM-5.2` | Primary model the conductor tries first |
-| `HF_CONDUCTOR_FALLBACK_MODEL` | `MiniMaxAI/MiniMax-M3` | Equivalent model tried when all providers for the base fail |
+| `HF_CONDUCTOR_PANEL` | `Qwen/Qwen2.5-7B-Instruct,meta-llama/Llama-3.1-8B-Instruct,allenai/Olmo-3-7B-Instruct` | Comma-separated panel models (cheap/fast, run in parallel) |
+| `HF_CONDUCTOR_JUDGE` | `MiniMaxAI/MiniMax-M3` | Non-reasoning frontier model that synthesizes the panel outputs |
+| `HF_CONDUCTOR_PANEL_MAX_TOKENS` | `4096` | Max tokens per panel response |
+| `HF_CONDUCTOR_JUDGE_MAX_TOKENS` | `16384` | Max tokens for the judge's synthesized response |
+| `HF_CONDUCTOR_PANEL_TIMEOUT` | `45` | Seconds before a panel model is treated as failed |
 | `HF_CONDUCTOR_PORT` | `8080` | Local proxy port |
 | `HF_CONDUCTOR_PROXY` | *(auto-detected)* | Path to `hf_conductor_proxy.py` |
-| `HF_CONDUCTOR_READ_TIMEOUT` | `60` | Seconds before a hung upstream counts as a failure |
+| `HF_CONDUCTOR_READ_TIMEOUT` | `120` | Seconds before the judge stream is treated as failed |
+| `HF_CONDUCTOR_STREAM_TIMEOUT` | `600` | Read timeout for the relayed judge stream (headroom for reasoning gaps) |
 | `HF_CONDUCTOR_LOG_LEVEL` | `INFO` | Proxy log level |
 
-> Note: this is a client-side resilience layer. It does **not** change billing —
-> requests are still authenticated with your HF token and metered by the router
-> against whichever provider/model actually serves each request.
+> Note: this is a client-side orchestration layer. Requests are still
+> authenticated with your HF token and metered by the router against the panel
+> and judge models that actually serve each request, so a conductor turn costs
+> roughly (sum of panel tokens) + (judge synthesis tokens).

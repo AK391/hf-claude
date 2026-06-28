@@ -191,11 +191,22 @@ if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
   fi
   command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required to run the conductor proxy." >&2; exit 1; }
 
+  # Prefer a venv bundled with the extension (deps isolated from system Python),
+  # falling back to the system python3 if it happens to have the deps.
+  HERE="$(cd "$(dirname "$0")" && pwd)"
+  if [[ -x "$HERE/.venv/bin/python" ]]; then
+    PY="$HERE/.venv/bin/python"
+  elif [[ -x "$HOME/.hf-conductor-venv/bin/python" ]]; then
+    PY="$HOME/.hf-conductor-venv/bin/python"
+  else
+    PY="python3"
+  fi
+
   PORT="${HF_CONDUCTOR_PORT:-8080}"
   # Reuse a running proxy on the port if one is already listening.
   if ! curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
     echo "→ starting huggingface/conductor proxy on 127.0.0.1:${PORT}" >&2
-    python3 "$PROXY_SCRIPT" >/tmp/hf-conductor.log 2>&1 &
+    "$PY" "$PROXY_SCRIPT" >/tmp/hf-conductor.log 2>&1 &
     CONDUCTOR_PID=$!
     # Wait until it accepts /health, but give up after ~10s.
     for _ in $(seq 1 100); do
