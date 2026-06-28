@@ -9,9 +9,13 @@ set -euo pipefail
 #   --bill-to <org> / --bill-to=<org>  bill inference to a HF org (X-HF-Bill-To)
 #   --conductor                        auto-select the huggingface/conductor
 #                                      resilient orchestrator (skip the menu)
+#   --all                              search the full Hub model catalog
+#                                      (~17k text-generation models) instead of
+#                                      opening the curated router list first
 # Falls back to $HF_BILL_TO when the flag is absent.
 BILL_TO="${HF_BILL_TO:-}"
 USE_CONDUCTOR=0
+HUB_SEARCH="${HF_CLAUDE_ALL:-0}"
 CLAUDE_ARGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,6 +30,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --bill-to=*) BILL_TO="${1#*=}"; shift ;;
     --conductor) USE_CONDUCTOR=1; shift ;;
+    --all) HUB_SEARCH=1; shift ;;
     *) CLAUDE_ARGS+=("$1"); shift ;;
   esac
 done
@@ -146,6 +151,134 @@ _arrow_menu() {
   printf '%s\n' "${items[sel]}"
 }
 
+# Minimal URL-encode for a query string (spaces -> +). The Hub /api/models
+# search param accepts '+' for spaces; other shell-safe chars pass through.
+_urlenc() {
+  local s="$1" out="" i c
+  for (( i = 0; i < ${#s}; i++ )); do
+    c="${s:i:1}"
+    case "$c" in
+      [[:alnum:]._-~]) out+="$c" ;;
+      ' ') out+='+' ;;
+      *) printf -v c '%%%02X' "'$c"; out+="$c" ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+# Lowercase a string via tr (portable: macOS stock bash 3.2 has no ${var,,}).
+_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
+
+# Fetch the Hugging Face Hub model catalog (text-generation models that have an
+# inference provider) and print one model id per line. The router's /v1/models
+# only exposes a ~123-model curated subset; the Hub endpoint has the full ~17k.
+# Uses cursor pagination via the HTTP `Link: <url>; rel="next"` header (the
+# cursor is an opaque base64 token, NOT the last model id). Walks all matching
+# pages, capped at ~10 pages so a very broad query can't run unbounded.
+#
+# $1 = query string (optional; empty = whole catalog). Reads nothing; prints ids.
+HUB_SEARCH_ENDPOINT="https://huggingface.co/api/models"
+_hub_fetch() {
+  local query="${1:-}" url enc
+  url="${HUB_SEARCH_ENDPOINT}?inference_provider=all&pipeline_tag=text-generation&limit=1000"
+  [[ -n "$query" ]] && enc="$(_urlenc "$query")" && url+="&search=${enc}"
+
+  local hdr body next pages=0
+  local max_pages="${HF_CLAUDE_HUB_MAX_PAGES:-10}"
+  while [[ -n "$url" ]]; do
+    (( pages >= max_pages )) && { echo "hf-claude: reached ${max_pages}-page search cap; showing first $(( pages * 1000 )) results. Narrow your query to see more." >&2; break; }
+    hdr="$(mktemp -t hf-hub-hdr.XXXXXX)" || return 1
+    body="$(mktemp -t hf-hub-body.XXXXXX)" || { rm -f "$hdr"; return 1; }
+    if curl -fsS -D "$hdr" -o "$body" "$url"; then
+      jq -r '.[].id' "$body" 2>/dev/null
+    else
+      echo "hf-claude: Hub catalog request failed for: $url" >&2
+    fi
+    # Next-page cursor lives in the Link header: <https://...>; rel="next".
+    # Strip CR (curl -D keeps CRLF); pull the URL of the rel="next" relation.
+    next="$(tr -d '\r' < "$hdr" | grep -i '^link:' \
+      | grep -oE '<[^>]+>;[[:space:]]*rel="next"' \
+      | sed -E 's/^<([^>]+)>;.*/\1/' | head -1)"
+    rm -f "$hdr" "$body"
+    url="$next"
+    (( pages++ ))
+  done
+}
+
+# Interactive Hub-catalog search. Prompts for a query on the tty, fetches
+# matches, and lets the user pick one via `pick` (fzf if present, else
+# `_filter_menu` which adds a type-to-filter step over `_arrow_menu` for large
+# lists). Prints the chosen model id to stdout, or nothing if cancelled.
+_hub_search() {
+  local query result all_ids count
+  [[ -t 2 && -r /dev/tty ]] || { echo "hf-claude: Hub search needs an interactive terminal." >&2; return 0; }
+  printf '\e[1mSearch Hub models\e[0m (blank = whole catalog): ' >&2
+  IFS= read -r query </dev/tty || query=""
+  echo "" >&2
+
+  all_ids="$(_hub_fetch "$query")"
+  if [[ -z "$all_ids" ]]; then
+    echo "hf-claude: no models matched \"${query}\"." >&2
+    return 0
+  fi
+  count="$(printf '%s\n' "$all_ids" | grep -c .)"
+
+  if command -v fzf >/dev/null 2>&1; then
+    # fzf fuzzy-matches natively over the whole result set.
+    printf '%s\n' "$all_ids" | fzf --prompt="Model: " --height=50% --reverse \
+      --header="Hub catalog — ${count} matches for \"${query:-all}\""
+    return $?
+  fi
+  # No fzf: hand off to the type-to-filter menu.
+  printf '%s\n' "$all_ids" | _filter_menu "Hub catalog — ${count} matches for \"${query:-all}\""
+}
+
+# No-fzf fallback for a large, searchable list. Reads ids from stdin, prompts
+# for a filter substring, narrows the set (case-insensitive substring), and
+# hands the narrowed list to `_arrow_menu`. Loops: re-filter if the narrowed set
+# is empty or the user cancels selection. Prints the chosen id, or nothing.
+_filter_menu() {
+  local header="$1" ids=() id filt match i
+  while IFS= read -r id; do ids+=("$id"); done
+  local n=${#ids[@]}
+  (( n == 0 )) && return 0
+  (( n == 1 )) && { printf '%s\n' "${ids[0]}"; return 0; }
+
+  set +e
+  if [[ ! -t 2 || ! -r /dev/tty ]]; then
+    echo "hf-claude: interactive menu needs a terminal (install fzf for selection)." >&2
+    return 0
+  fi
+
+  while true; do
+    printf '\e[1mFilter\e[0m (%d models, blank=all): ' "$n" >&2
+    IFS= read -r filt </dev/tty || filt=""
+    echo "" >&2
+    match=()
+    if [[ -z "$filt" ]]; then
+      match=("${ids[@]}")
+    else
+      local low; low="$(_lower "$filt")"
+      local idlow
+      for id in "${ids[@]}"; do
+        idlow="$(_lower "$id")"
+        [[ "$idlow" == *"$low"* ]] && match+=("$id")
+      done
+    fi
+    if (( ${#match[@]} == 0 )); then
+      echo "  no matches for \"${filt}\"; try another filter." >&2
+      continue
+    fi
+    local choice
+    choice="$(printf '%s\n' "${match[@]}" | _arrow_menu "$header")"
+    if [[ -n "$choice" ]]; then
+      printf '%s\n' "$choice"
+      return 0
+    fi
+    # cancelled selection -> loop back to re-filter
+  done
+}
+
 MODEL_DATA="$(curl -fsS "https://router.huggingface.co/v1/models" \
   -H "Authorization: Bearer ${HF_TOKEN}")"
 
@@ -169,12 +302,37 @@ _find_conductor_proxy() {
   return 1
 }
 
+SEARCH_HUB_ENTRY="🔍 Search the full Hub catalog…"
+MODEL_ORIGIN="router"
+
 if [[ "$USE_CONDUCTOR" == "1" ]]; then
   MODEL="$CONDUCTOR_ID"
+  MODEL_ORIGIN="conductor"
+elif [[ "$HUB_SEARCH" == "1" ]]; then
+  # --all: open straight into the Hub search prompt. Cancel falls back to the
+  # curated router list so the user is never left with no way to pick a model.
+  MODEL="$(_hub_search)"
+  if [[ -z "$MODEL" ]]; then
+    MODEL="$(printf '%s\n' "$CONDUCTOR_ID" \
+      | cat - <(echo "$MODEL_DATA" | jq -r '.data[].id') \
+      | pick "Model: " "Hugging Face Inference Providers - Select Model")"
+  else
+    MODEL_ORIGIN="hub"
+  fi
 else
-  MODEL="$(printf '%s\n' "$CONDUCTOR_ID" \
+  # Default: curated router list with a search entry prepended alongside the
+  # conductor entry, so the full ~17k Hub catalog is one selection away.
+  MODEL="$(printf '%s\n' "$SEARCH_HUB_ENTRY" "$CONDUCTOR_ID" \
     | cat - <(echo "$MODEL_DATA" | jq -r '.data[].id') \
     | pick "Model: " "Hugging Face Inference Providers - Select Model")"
+  if [[ "$MODEL" == "$SEARCH_HUB_ENTRY" ]]; then
+    MODEL="$(_hub_search)"
+    if [[ -n "$MODEL" ]]; then
+      MODEL_ORIGIN="hub"
+    else
+      MODEL=""   # search cancelled; treat as no selection below
+    fi
+  fi
 fi
 
 if [[ -z "$MODEL" ]]; then
@@ -223,23 +381,32 @@ if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
   MODEL_STRING="$CONDUCTOR_ID"
   PROVIDER="conductor"
 else
-  PROVIDER="$(
-    {
-      echo "auto"
-      echo "$MODEL_DATA" | jq -r --arg model "$MODEL" '.data[] | select(.id == $model) | .providers[].provider'
-    } | awk '!seen[$0]++' \
-      | pick "Provider: " "Select Provider for ${MODEL} (auto = no suffix)"
-  )"
-
-  if [[ -z "$PROVIDER" ]]; then
-    echo "No provider selected"
-    exit 1
-  fi
-
-  if [[ "$PROVIDER" == "auto" ]]; then
+  if [[ "$MODEL_ORIGIN" == "hub" ]]; then
+    # A model chosen from the Hub catalog: the Hub /api/models response carries
+    # no per-provider list, so we can't offer a provider menu. Route with the
+    # bare model id and let the router pick the serving provider (:fastest).
+    PROVIDER="auto"
     MODEL_STRING="$MODEL"
+    echo "→ using auto provider routing for Hub model: ${MODEL}" >&2
   else
-    MODEL_STRING="${MODEL}:${PROVIDER}"
+    PROVIDER="$(
+      {
+        echo "auto"
+        echo "$MODEL_DATA" | jq -r --arg model "$MODEL" '.data[] | select(.id == $model) | .providers[].provider'
+      } | awk '!seen[$0]++' \
+        | pick "Provider: " "Select Provider for ${MODEL} (auto = no suffix)"
+    )"
+
+    if [[ -z "$PROVIDER" ]]; then
+      echo "No provider selected"
+      exit 1
+    fi
+
+    if [[ "$PROVIDER" == "auto" ]]; then
+      MODEL_STRING="$MODEL"
+    else
+      MODEL_STRING="${MODEL}:${PROVIDER}"
+    fi
   fi
 fi
 

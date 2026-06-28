@@ -3,8 +3,8 @@
 extension for `hf` to launch Claude Code with [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers/en/index)
 
 It lets you pick:
-- model (from `https://router.huggingface.co/v1/models`)
-- provider (`auto` or a concrete provider for the selected model)
+- model — by default the curated list at `https://router.huggingface.co/v1/models` (~120 models), with a **Search the full Hub catalog…** entry that searches every text-generation model that has an inference provider (~17k models on `https://huggingface.co/api/models`)
+- provider (`auto` or a concrete provider for the selected model; Hub-only models are routed with `auto` since the Hub list carries no per-provider info)
 
 Then it runs `claude --model <model[:provider]>` with the required env vars preconfigured.
 
@@ -43,6 +43,29 @@ Forward extra args to Claude Code:
 hf claude --help
 hf extensions exec claude -- --help
 ```
+
+## Searching the full Hub catalog
+
+The default model menu shows the router's curated list (~120 models). To reach
+the long tail, pick **🔍 Search the full Hub catalog…** at the top of that menu,
+or open straight into the search prompt with `--all`:
+
+```bash
+hf claude --all
+```
+
+You'll be prompted for a search query (blank = whole catalog), which queries the
+Hub's `api/models` endpoint filtered to text-generation models that have an
+inference provider (~17,000 models). With `fzf` installed you fuzzy-match over
+the results directly; without it, a type-to-filter prompt narrows the list
+before an arrow-key menu.
+
+Models found via Hub search are routed with `auto` provider selection (the Hub
+listing doesn't expose which providers serve a model), so they launch as
+`claude --model <model>` with no `:provider` suffix. Set
+`HF_CLAUDE_ALL=1` to make search the default opening screen, and
+`HF_CLAUDE_HUB_MAX_PAGES` (default `10`) to raise/lower the pagination cap on
+broad queries.
 
 ## Billing to an organization
 
