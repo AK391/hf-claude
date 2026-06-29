@@ -136,6 +136,11 @@ The launcher starts the local proxy (default `127.0.0.1:8080`) — reusing one i
 already running — and points Claude Code at it. Logs go to
 `/tmp/hf-conductor.log`.
 
+When you pick the `🤗 huggingface/conductor` entry from the menu, an explainer
+screen describes the Fusion pipeline before the proxy starts; press Enter to
+continue or Ctrl-C to cancel. Skip it with
+`HF_CONDUCTOR_SKIP_EXPLAINER=1` (or in any non-interactive run).
+
 ### Configuration (environment variables)
 
 | Variable | Default | Purpose |
@@ -149,6 +154,7 @@ already running — and points Claude Code at it. Logs go to
 | `HF_CONDUCTOR_JUDGE_MAX_TOKENS` | `16384` | Max tokens for the synthesizer's final answer |
 | `HF_CONDUCTOR_PANEL_TIMEOUT` | `45` | Seconds before a panel model is treated as failed |
 | `HF_CONDUCTOR_EXCLUDE_DOMAINS` | *(empty)* | Comma-separated domains to exclude from any future panel web tools (the Fusion blog's anti-contamination measure; no-op until you wire tools onto the panel) |
+| `HF_CONDUCTOR_SKIP_EXPLAINER` | `0` | Set to `1` to skip the pre-launch 🤗 explainer screen when selecting the conductor |
 | `HF_CONDUCTOR_PORT` | `8080` | Local proxy port |
 | `HF_CONDUCTOR_PROXY` | *(auto-detected)* | Path to `hf_conductor_proxy.py` |
 | `HF_CONDUCTOR_READ_TIMEOUT` | `120` | Seconds before the analyst / non-streaming synthesizer is treated as failed |

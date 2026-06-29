@@ -288,7 +288,47 @@ MODEL_DATA="$(curl -fsS "https://router.huggingface.co/v1/models" \
 # runs as a tiny local proxy; selecting it from the menu launches the proxy and
 # points Claude Code at it. See hf_conductor_proxy.py.
 CONDUCTOR_ID="huggingface/conductor"
+# Friendly menu label — the bare id gives no hint at what the conductor does, so
+# prepend the HF 🤗 and a one-line description. We map it back to CONDUCTOR_ID
+# right after the menu resolves, so the rest of the script only ever sees the id.
+CONDUCTOR_MENU_LABEL="🤗 huggingface/conductor — Fusion-style orchestrator (panel → analyst → synthesis)"
 CONDUCTOR_PROXY="${HF_CONDUCTOR_PROXY:-}"
+
+# Print a short explainer about what the conductor is, then wait for a keypress.
+# Skipped when HF_CONDUCTOR_SKIP_EXPLAINER=1, or when stderr isn't a TTY (so
+# non-interactive / automated runs aren't blocked). Cancel with Ctrl-C before
+# any key to abort without starting the proxy.
+_conductor_explainer() {
+  [[ "${HF_CONDUCTOR_SKIP_EXPLAINER:-0}" == "1" ]] && return 0
+  [[ -t 2 ]] || return 0
+  cat >&2 <<'EOF'
+🤗  huggingface/conductor — OpenRouter Fusion-style orchestrator
+
+    Instead of one model answering your prompt, the conductor runs the Fusion
+    pipeline that OpenRouter found surpasses single frontier models:
+
+      1. PANEL      — your prompt is sent to several diverse models in parallel
+      2. ANALYST    — a model reads every panel answer and writes structured
+                      analysis (consensus / contradictions / coverage / blind spots)
+      3. SYNTHESIS  — a model streams the final unified answer, grounded in that
+
+    Defaults: 3 small panel models (Qwen2.5-7B, Llama-3.1-8B, Olmo-3-7B) and a
+    frontier analyst+synthesizer (MiniMax-M3). All configurable via HF_CONDUCTOR_*
+    env vars; see README for the full list.
+
+    Cost: a turn is billed as (panel tokens) + (analyst tokens) + (synthesis
+    tokens), against your HF token / --bill-to org.
+
+    Logs: /tmp/hf-conductor.log   •   Proxy: 127.0.0.1:8080
+
+  Press Enter to continue · Ctrl-C to cancel
+EOF
+  printf '\e[?25l' >&2   # hide cursor while waiting
+  local key
+  IFS= read -rsn1 key </dev/tty || key=""
+  printf '\e[?25h' >&2   # show cursor again
+  echo "" >&2
+}
 
 _find_conductor_proxy() {
   # Explicit override wins; otherwise look next to this script, then on PATH.
@@ -314,7 +354,7 @@ elif [[ "$HUB_SEARCH" == "1" ]]; then
   # curated router list so the user is never left with no way to pick a model.
   MODEL="$(_hub_search)"
   if [[ -z "$MODEL" ]]; then
-    MODEL="$(printf '%s\n' "$CONDUCTOR_ID" \
+    MODEL="$(printf '%s\n' "$CONDUCTOR_MENU_LABEL" \
       | cat - <(echo "$MODEL_DATA" | jq -r '.data[].id') \
       | pick "Model: " "Hugging Face Inference Providers - Select Model")"
   else
@@ -323,7 +363,7 @@ elif [[ "$HUB_SEARCH" == "1" ]]; then
 else
   # Default: curated router list with a search entry prepended alongside the
   # conductor entry, so the full ~17k Hub catalog is one selection away.
-  MODEL="$(printf '%s\n' "$SEARCH_HUB_ENTRY" "$CONDUCTOR_ID" \
+  MODEL="$(printf '%s\n' "$SEARCH_HUB_ENTRY" "$CONDUCTOR_MENU_LABEL" \
     | cat - <(echo "$MODEL_DATA" | jq -r '.data[].id') \
     | pick "Model: " "Hugging Face Inference Providers - Select Model")"
   if [[ "$MODEL" == "$SEARCH_HUB_ENTRY" ]]; then
@@ -336,12 +376,21 @@ else
   fi
 fi
 
+# The menu shows the friendly 🤗 label; collapse it back to the bare id so the
+# rest of the script (provider routing, MODEL_STRING, conductor startup) only
+# ever compares against CONDUCTOR_ID.
+[[ "$MODEL" == "$CONDUCTOR_MENU_LABEL" ]] && MODEL="$CONDUCTOR_ID"
+
 if [[ -z "$MODEL" ]]; then
   echo "No model selected"
   exit 1
 fi
 
 if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
+  # Show what the conductor is before committing to it; cancel here (Ctrl-C) to
+  # bail out before the proxy starts. HF_CONDUCTOR_SKIP_EXPLAINER=1 / non-TTY
+  # skips it so automated runs aren't blocked.
+  _conductor_explainer
   PROXY_SCRIPT="$(_find_conductor_proxy || true)"
   if [[ -z "$PROXY_SCRIPT" ]]; then
     echo "Error: selected huggingface/conductor but hf_conductor_proxy.py was not found." >&2
