@@ -8,7 +8,7 @@ set -euo pipefail
 # Parse wrapper flags, forwarding everything else to `claude`.
 #   --bill-to <org> / --bill-to=<org>  bill inference to a HF org (X-HF-Bill-To)
 #   --conductor                        auto-select the huggingface/conductor
-#                                      resilient orchestrator (skip the menu)
+#                                      Fusion-style orchestrator (skip the menu)
 #   --all                              search the full Hub model catalog
 #                                      (~17k text-generation models) instead of
 #                                      opening the curated router list first
@@ -282,10 +282,11 @@ _filter_menu() {
 MODEL_DATA="$(curl -fsS "https://router.huggingface.co/v1/models" \
   -H "Authorization: Bearer ${HF_TOKEN}")"
 
-# huggingface/conductor is a local resilient orchestrator: it failovers across
-# providers (then an equivalent model class) instead of letting Claude Code hang
-# on a broken endpoint. It runs as a tiny local proxy; selecting it from the
-# menu launches the proxy and points Claude Code at it. See hf_conductor_proxy.py.
+# huggingface/conductor is a local Fusion-style orchestrator: it fans the prompt
+# out to a panel of diverse models in parallel, an analyst produces structured
+# analysis of their outputs, and a synthesizer streams one unified answer. It
+# runs as a tiny local proxy; selecting it from the menu launches the proxy and
+# points Claude Code at it. See hf_conductor_proxy.py.
 CONDUCTOR_ID="huggingface/conductor"
 CONDUCTOR_PROXY="${HF_CONDUCTOR_PROXY:-}"
 

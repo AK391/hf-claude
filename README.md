@@ -87,11 +87,25 @@ hf claude
 ## `huggingface/conductor` — OpenRouter Fusion-style orchestrator
 
 `huggingface/conductor` is an orchestrator option at the top of the model menu
-that implements the OpenRouter Fusion pattern: a prompt is fanned out to a
-panel of cheap/fast models in parallel, and a frontier **judge** model
-synthesizes their outputs into a single streamed response. The idea is many
-inexpensive perspectives, one high-quality synthesis — often better than any
-single model in the panel, at a fraction of a frontier-model's token cost.
+that implements the [OpenRouter Fusion](https://openrouter.ai/blog/fusion)
+pattern. It runs the full Fusion pipeline rather than a single synthesis pass:
+
+1. The prompt is fanned out to a **panel** of diverse models **in parallel**
+   (cheap, fast, different labs — they disagree productively).
+2. An **analyst** model reads every panel response and produces *structured
+   analysis*: consensus points, contradictions, partial coverage, unique
+   insights, and blind spots.
+3. A **synthesizer** writes the final streamed answer, **grounded in that
+   analysis** — resolving contradictions, folding in unique insights, filling
+   blind spots.
+
+The two-stage analysis → synthesis is what OpenRouter found lets a panel of
+budget models surpass a single frontier model on deep research. They also found
+that fusing a model *with itself* (Opus 4.8 + Opus 4.8) beat solo Opus by 6.7
+points — so a lot of the lift is the synthesis step itself. By default the
+analyst and synthesizer are therefore the *same* frontier non-reasoning model;
+the diversity that matters lives in the panel. Split analyst and synthesizer
+into different models with env vars if you want cross-family checking.
 
 It runs as a tiny local proxy bundled with this extension.
 
@@ -100,9 +114,10 @@ It runs as a tiny local proxy bundled with this extension.
 1. Claude Code sends a request to `huggingface/conductor`.
 2. The proxy fans the prompt out to every model in the panel **in parallel**
    (non-streaming, short max-tokens each).
-3. Once the panel responds, a judge model receives all the answers plus the
-   original request and synthesizes a single unified response.
-4. That synthesized response is streamed back to Claude Code.
+3. The analyst model receives the panel answers plus the original request and
+   emits a structured analysis (non-streaming).
+4. The synthesizer model receives the original request, the panel answers, and
+   the analysis, and streams the final unified response back to Claude Code.
 
 ### Requirements
 
@@ -125,18 +140,23 @@ already running — and points Claude Code at it. Logs go to
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HF_CONDUCTOR_PANEL` | `Qwen/Qwen2.5-7B-Instruct,meta-llama/Llama-3.1-8B-Instruct,allenai/Olmo-3-7B-Instruct` | Comma-separated panel models (cheap/fast, run in parallel) |
-| `HF_CONDUCTOR_JUDGE` | `MiniMaxAI/MiniMax-M3` | Non-reasoning frontier model that synthesizes the panel outputs |
+| `HF_CONDUCTOR_PANEL` | `Qwen/Qwen2.5-7B-Instruct,meta-llama/Llama-3.1-8B-Instruct,allenai/Olmo-3-7B-Instruct` | Comma-separated panel models (diverse, cheap/fast, run in parallel) |
+| `HF_CONDUCTOR_ANALYST` | `MiniMaxAI/MiniMax-M3` | Model that produces structured analysis of the panel outputs |
+| `HF_CONDUCTOR_SYNTH` | `MiniMaxAI/MiniMax-M3` | Model that streams the final synthesized answer |
+| `HF_CONDUCTOR_JUDGE` | *(unset)* | Legacy: if set, becomes the default for both `HF_CONDUCTOR_ANALYST` and `HF_CONDUCTOR_SYNTH` (one model for both stages, as in v0.3) |
 | `HF_CONDUCTOR_PANEL_MAX_TOKENS` | `4096` | Max tokens per panel response |
-| `HF_CONDUCTOR_JUDGE_MAX_TOKENS` | `16384` | Max tokens for the judge's synthesized response |
+| `HF_CONDUCTOR_ANALYST_MAX_TOKENS` | `3072` | Max tokens for the analyst's structured analysis |
+| `HF_CONDUCTOR_JUDGE_MAX_TOKENS` | `16384` | Max tokens for the synthesizer's final answer |
 | `HF_CONDUCTOR_PANEL_TIMEOUT` | `45` | Seconds before a panel model is treated as failed |
+| `HF_CONDUCTOR_EXCLUDE_DOMAINS` | *(empty)* | Comma-separated domains to exclude from any future panel web tools (the Fusion blog's anti-contamination measure; no-op until you wire tools onto the panel) |
 | `HF_CONDUCTOR_PORT` | `8080` | Local proxy port |
 | `HF_CONDUCTOR_PROXY` | *(auto-detected)* | Path to `hf_conductor_proxy.py` |
-| `HF_CONDUCTOR_READ_TIMEOUT` | `120` | Seconds before the judge stream is treated as failed |
-| `HF_CONDUCTOR_STREAM_TIMEOUT` | `600` | Read timeout for the relayed judge stream (headroom for reasoning gaps) |
+| `HF_CONDUCTOR_READ_TIMEOUT` | `120` | Seconds before the analyst / non-streaming synthesizer is treated as failed |
+| `HF_CONDUCTOR_STREAM_TIMEOUT` | `600` | Read timeout for the relayed synthesizer stream (headroom for reasoning gaps) |
 | `HF_CONDUCTOR_LOG_LEVEL` | `INFO` | Proxy log level |
 
 > Note: this is a client-side orchestration layer. Requests are still
-> authenticated with your HF token and metered by the router against the panel
-> and judge models that actually serve each request, so a conductor turn costs
-> roughly (sum of panel tokens) + (judge synthesis tokens).
+> authenticated with your HF token and metered by the router against the panel,
+> analyst, and synthesizer models that actually serve each request, so a
+> conductor turn costs roughly (sum of panel tokens) + (analyst tokens) +
+> (synthesizer tokens).
