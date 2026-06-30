@@ -60,15 +60,36 @@ STREAM_READ_TIMEOUT = float(os.environ.get("HF_CONDUCTOR_STREAM_TIMEOUT", "600")
 # frontier panel (e.g. Fable 5 + GPT-5.5) synthesizes to ~69% on DRACO vs ~65%
 # solo, and (2) a *budget* panel of different families (Gemini Flash + Kimi +
 # DeepSeek) beats individual frontier models. So the panel is chosen for
-# diversity and cost, NOT raw size — three ~7-8B models from different labs are
-# fast, cheap, and disagree productively. The analyst and synthesizer default to
-# the same non-reasoning frontier model: OpenRouter found fusing Opus 4.8 with
-# itself beat solo Opus by 6.7pts, so a lot of the lift is the synthesis step
-# itself (two stages, one model). A non-reasoning judge streams visible text
+# diversity and cost, NOT raw size. The analyst and synthesizer default to the
+# same non-reasoning frontier model: OpenRouter found fusing Opus 4.8 with itself
+# beat solo Opus by 6.7pts, so a lot of the lift is the synthesis step itself
+# (two stages, one model). A non-reasoning judge streams visible text
 # immediately; a reasoning judge burns its token budget on hidden thinking
 # blocks. Split analyst/synth into two different models with
 # HF_CONDUCTOR_ANALYST / HF_CONDUCTOR_SYNTH if you want cross-family checking.
-DEFAULT_PANEL = "Qwen/Qwen2.5-7B-Instruct,meta-llama/Llama-3.1-8B-Instruct,allenai/Olmo-3-7B-Instruct"
+#
+# Three presets mirror the three Fusion presets on OpenRouter's Fusion page
+# (general-high / general-budget / general-fast): Quality, Budget, Speed. Each
+# is a 3-model diverse panel; the panel composition changes, the panel SIZE
+# stays 3 (matches OpenRouter's three-member panels). A launcher-selectable
+# preset writes the chosen panel into HF_CONDUCTOR_PANEL so the proxy needs no
+# preset awareness of its own.
+PRESETS = {
+    # 🏆 Quality — strong, diverse panel for best synthesis. Different frontier
+    # families (DeepSeek / GLM / Qwen-Coder) so they disagree productively and
+    # the analyst has real consensus/contradiction signal to work with.
+    "quality": "deepseek-ai/DeepSeek-V4-Pro,zai-org/GLM-4.7,Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    # 💰 Budget — cheap-but-capable diverse panel, OpenRouter's "budget panel"
+    # finding: this class beat individual frontier models at ~50% cost.
+    "budget": "Qwen/Qwen3.5-9B,openai/gpt-oss-20b,google/gemma-3-12b-it",
+    # ⚡ Speed — small fast models from different labs for lowest latency.
+    "speed": "Qwen/Qwen2.5-7B-Instruct,meta-llama/Llama-3.1-8B-Instruct,allenai/Olmo-3-7B-Instruct",
+}
+DEFAULT_PANEL = PRESETS["speed"]  # Speed is the no-surprise default (fast + cheap).
+DEFAULT_PRESET = "speed"
+PRESET = os.environ.get("HF_CONDUCTOR_PRESET", "").strip().lower()
+if PRESET and PRESET in PRESETS:
+    DEFAULT_PANEL = PRESETS[PRESET]
 DEFAULT_ANALYST = "MiniMaxAI/MiniMax-M3"
 DEFAULT_SYNTH = "MiniMaxAI/MiniMax-M3"
 PANEL = [m.strip() for m in os.environ.get("HF_CONDUCTOR_PANEL", DEFAULT_PANEL).split(",") if m.strip()]
@@ -442,9 +463,13 @@ async def health():
     return {
         "ok": True,
         "conductor": "fusion",
+        "preset": PRESET or DEFAULT_PRESET,
         "panel": PANEL,
         "analyst": ANALYST,
         "synthesizer": SYNTH,
+        # Expose the full preset catalog so a client (the launcher's preset
+        # picker) can show which 3 models each preset uses without hardcoding.
+        "presets": PRESETS,
     }
 
 

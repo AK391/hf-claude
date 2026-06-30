@@ -2,7 +2,7 @@
   "name": "hf-claude",
   "description": "Launch Claude Code with Hugging Face Inference Providers (with optional huggingface/conductor Fusion-style orchestrator)",
   "entrypoint": "hf-claude",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "license": "Apache-2.0",
   "requires": [
     "bash",

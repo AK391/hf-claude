@@ -298,10 +298,18 @@ CONDUCTOR_PROXY="${HF_CONDUCTOR_PROXY:-}"
 # Skipped when HF_CONDUCTOR_SKIP_EXPLAINER=1, or when stderr isn't a TTY (so
 # non-interactive / automated runs aren't blocked). Cancel with Ctrl-C before
 # any key to abort without starting the proxy.
+#
+# $1 = preset name (quality|budget|speed|custom), $2 = comma-joined panel,
+# $3 = comma-joined judge (analyst,synthesizer). Pulled live from the proxy's
+# /health so the screen reflects the panel that will actually run.
 _conductor_explainer() {
   [[ "${HF_CONDUCTOR_SKIP_EXPLAINER:-0}" == "1" ]] && return 0
   [[ -t 2 ]] || return 0
-  cat >&2 <<'EOF'
+  local preset="${1:-?}" panel="${2:-?}" judge="${3:-?}"
+  local panel_pretty judge_pretty
+  panel_pretty="$(printf '%s\n' "$panel" | tr ',' '\n' | sed 's/^/      • /')"
+  judge_pretty="$(printf '%s\n' "$judge" | tr ',' '\n' | sed 's/^/      • /')"
+  cat >&2 <<EOF
 🤗  huggingface/conductor — OpenRouter Fusion-style orchestrator
 
     Instead of one model answering your prompt, the conductor runs the Fusion
@@ -312,9 +320,13 @@ _conductor_explainer() {
                       analysis (consensus / contradictions / coverage / blind spots)
       3. SYNTHESIS  — a model streams the final unified answer, grounded in that
 
-    Defaults: 3 small panel models (Qwen2.5-7B, Llama-3.1-8B, Olmo-3-7B) and a
-    frontier analyst+synthesizer (MiniMax-M3). All configurable via HF_CONDUCTOR_*
-    env vars; see README for the full list.
+    Preset: ${preset}   (panel size fixed at 3 — matches OpenRouter's Fusion)
+
+    Panel (the 3 models that will answer in parallel):
+${panel_pretty}
+
+    Analyst + synthesizer (fuse the panel into the final answer):
+${judge_pretty}
 
     Cost: a turn is billed as (panel tokens) + (analyst tokens) + (synthesis
     tokens), against your HF token / --bill-to org.
@@ -387,10 +399,28 @@ if [[ -z "$MODEL" ]]; then
 fi
 
 if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
-  # Show what the conductor is before committing to it; cancel here (Ctrl-C) to
-  # bail out before the proxy starts. HF_CONDUCTOR_SKIP_EXPLAINER=1 / non-TTY
-  # skips it so automated runs aren't blocked.
-  _conductor_explainer
+  # Three presets mirror OpenRouter Fusion's three (general-high / -budget /
+  # -fast): Quality, Budget, Speed. Each is a fixed-size (3) diverse panel. The
+  # panel composition changes, the size stays 3. HF_CONDUCTOR_PRESET set in the
+  # env skips the picker; so does any non-interactive run (defaulting to Speed,
+  # which keeps --conductor's "skip the menu" promise).
+  CONDUCTOR_PRESET="${HF_CONDUCTOR_PRESET:-}"
+  if [[ -z "$CONDUCTOR_PRESET" && -t 2 ]]; then
+    CONDUCTOR_PRESET="$(printf '%s\n' \
+      "quality  🏆 — strongest panel (DeepSeek-V4-Pro, GLM-4.7, Qwen3-Coder-30B)" \
+      "budget   💰 — cheap-but-capable (Qwen3.5-9B, gpt-oss-20b, gemma-3-12b)" \
+      "speed    ⚡ — fast small panel (Qwen2.5-7B, Llama-3.1-8B, Olmo-3-7B)" \
+      | pick "Preset: " "huggingface/conductor — Fusion preset (panel of 3)" )"
+    # The picker returns the whole line; take the first whitespace-delimited token.
+    CONDUCTOR_PRESET="${CONDUCTOR_PRESET%% *}"
+  fi
+  [[ -z "$CONDUCTOR_PRESET" ]] && CONDUCTOR_PRESET="speed"
+  case "$CONDUCTOR_PRESET" in
+    quality|budget|speed) : ;;  # valid
+    *) echo "Unknown preset: ${CONDUCTOR_PRESET} (use quality|budget|speed)" >&2; exit 1 ;;
+  esac
+  export HF_CONDUCTOR_PRESET="$CONDUCTOR_PRESET"
+
   PROXY_SCRIPT="$(_find_conductor_proxy || true)"
   if [[ -z "$PROXY_SCRIPT" ]]; then
     echo "Error: selected huggingface/conductor but hf_conductor_proxy.py was not found." >&2
@@ -411,9 +441,27 @@ if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
   fi
 
   PORT="${HF_CONDUCTOR_PORT:-8080}"
-  # Reuse a running proxy on the port if one is already listening.
+  # If a proxy is already running but on a DIFFERENT preset, restart it so the
+  # chosen panel takes effect. A proxy picks its panel at import time from the
+  # env, so a long-lived one won't see a preset change without a restart.
+  _RUNNING_PRESET="$(curl -fsS "http://127.0.0.1:${PORT}/health" 2>/dev/null | jq -r '.preset // empty' 2>/dev/null || true)"
+  if [[ -n "$_RUNNING_PRESET" && "$_RUNNING_PRESET" != "$CONDUCTOR_PRESET" ]]; then
+    echo "→ switching conductor preset ${_RUNNING_PRESET} → ${CONDUCTOR_PRESET}; restarting proxy" >&2
+    # Kill the process bound to the port so the new preset can take the port.
+    # lsof is standard on macOS; fall back to a no-op kill if it's absent.
+    if command -v lsof >/dev/null 2>&1; then
+      _RUNNING_PID="$(lsof -ti tcp:${PORT} 2>/dev/null | head -1 || true)"
+      [[ -n "$_RUNNING_PID" ]] && kill "$_RUNNING_PID" 2>/dev/null || true
+    fi
+    # Wait for the old proxy to release the port.
+    for _ in $(seq 1 50); do
+      curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1 || break
+      sleep 0.1
+    done
+  fi
+  # Reuse a running proxy on the port if one is already listening (and matched).
   if ! curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
-    echo "→ starting huggingface/conductor proxy on 127.0.0.1:${PORT}" >&2
+    echo "→ starting huggingface/conductor proxy on 127.0.0.1:${PORT} (preset: ${CONDUCTOR_PRESET})" >&2
     "$PY" "$PROXY_SCRIPT" >/tmp/hf-conductor.log 2>&1 &
     CONDUCTOR_PID=$!
     # Wait until it accepts /health, but give up after ~10s.
@@ -428,6 +476,15 @@ if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
     echo "       Check /tmp/hf-conductor.log or set HF_CONDUCTOR_PORT." >&2
     exit 1
   }
+  # Pull the resolved panel + judges from /health so the explainer shows the
+  # exact 3 panel models + analyst/synthesizer the proxy will use this session.
+  _HEALTH_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/health" 2>/dev/null || echo '{}')"
+  _RESOLVED_PRESET="$(printf '%s' "$_HEALTH_JSON" | jq -r '.preset // "?"')"
+  _RESOLVED_PANEL="$(printf '%s' "$_HEALTH_JSON" | jq -r '.panel | join(",")')"
+  _RESOLVED_JUDGE="$(printf '%s' "$_HEALTH_JSON" | jq -r '[.analyst, .synthesizer] | join(",")')"
+  # Show what the conductor is before committing to it; cancel here (Ctrl-C) to
+  # bail out. HF_CONDUCTOR_SKIP_EXPLAINER=1 / non-TTY skips it.
+  _conductor_explainer "$_RESOLVED_PRESET" "$_RESOLVED_PANEL" "$_RESOLVED_JUDGE"
   MODEL_STRING="$CONDUCTOR_ID"
   PROVIDER="conductor"
 else
