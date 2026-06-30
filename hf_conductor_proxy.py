@@ -80,8 +80,8 @@ PRESETS = {
     # analyst has real consensus/contradiction signal to work with.
     "quality": "zai-org/GLM-5.2,deepseek-ai/DeepSeek-V3,moonshotai/Kimi-K2.6",
     # 💰 Budget — cheap-but-capable diverse panel, OpenRouter's "budget panel"
-    # finding: this class beat individual frontier models at ~50% cost.
-    "budget": "Qwen/Qwen3.5-9B,openai/gpt-oss-20b,google/gemma-3-12b-it",
+    # finding: this class beat individual frontier models at a fraction of cost.
+    "budget": "deepreinforce-ai/Ornith-1.0-35B,Qwen/Qwen3.6-35B-A3B,google/gemma-4-31B-it",
     # ⚡ Speed — small fast models from different labs for lowest latency.
     "speed": "Qwen/Qwen2.5-7B-Instruct,meta-llama/Llama-3.1-8B-Instruct,allenai/Olmo-3-7B-Instruct",
 }

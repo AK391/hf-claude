@@ -146,7 +146,7 @@ diverse models from different labs — the composition changes, the size stays 3
 | Preset | Panel (3 models) | When to reach for it |
 | --- | --- | --- |
 | 🏆 **quality** | `zai-org/GLM-5.2`, `deepseek-ai/DeepSeek-V3`, `moonshotai/Kimi-K2.6` | Best synthesis — research, expert critique, where the cost of being wrong outweighs extra completions |
-| 💰 **budget** | `Qwen/Qwen3.5-9B`, `openai/gpt-oss-20b`, `google/gemma-3-12b-it` | Cheap-but-capable diverse panel at a fraction of frontier cost |
+| 💰 **budget** | `deepreinforce-ai/Ornith-1.0-35B`, `Qwen/Qwen3.6-35B-A3B`, `google/gemma-4-31B-it` | Cheap-but-capable diverse panel at a fraction of frontier cost |
 | ⚡ **speed** | `Qwen/Qwen2.5-7B`, `meta-llama/Llama-3.1-8B-Instruct`, `allenai/Olmo-3-7B-Instruct` | Lowest latency; the default |
 
 When you select the conductor interactively, a preset picker appears; the
