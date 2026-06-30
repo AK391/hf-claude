@@ -75,10 +75,10 @@ STREAM_READ_TIMEOUT = float(os.environ.get("HF_CONDUCTOR_STREAM_TIMEOUT", "600")
 # preset writes the chosen panel into HF_CONDUCTOR_PANEL so the proxy needs no
 # preset awareness of its own.
 PRESETS = {
-    # 🏆 Quality — strong, diverse panel for best synthesis. Different frontier
-    # families (DeepSeek / GLM / Qwen-Coder) so they disagree productively and
-    # the analyst has real consensus/contradiction signal to work with.
-    "quality": "deepseek-ai/DeepSeek-V4-Pro,zai-org/GLM-4.7,Qwen/Qwen3-Coder-30B-A3B-Instruct",
+    # 🏆 Quality — strong, diverse frontier panel for best synthesis. Different
+    # families (GLM / DeepSeek / Kimi) so they disagree productively and the
+    # analyst has real consensus/contradiction signal to work with.
+    "quality": "zai-org/GLM-5.2,deepseek-ai/DeepSeek-V3,moonshotai/Kimi-K2.6",
     # 💰 Budget — cheap-but-capable diverse panel, OpenRouter's "budget panel"
     # finding: this class beat individual frontier models at ~50% cost.
     "budget": "Qwen/Qwen3.5-9B,openai/gpt-oss-20b,google/gemma-3-12b-it",

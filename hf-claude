@@ -407,7 +407,7 @@ if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
   CONDUCTOR_PRESET="${HF_CONDUCTOR_PRESET:-}"
   if [[ -z "$CONDUCTOR_PRESET" && -t 2 ]]; then
     CONDUCTOR_PRESET="$(printf '%s\n' \
-      "quality  🏆 — strongest panel (DeepSeek-V4-Pro, GLM-4.7, Qwen3-Coder-30B)" \
+      "quality  🏆 — strongest panel (GLM-5.2, DeepSeek-V3, Kimi-K2.6)" \
       "budget   💰 — cheap-but-capable (Qwen3.5-9B, gpt-oss-20b, gemma-3-12b)" \
       "speed    ⚡ — fast small panel (Qwen2.5-7B, Llama-3.1-8B, Olmo-3-7B)" \
       | pick "Preset: " "huggingface/conductor — Fusion preset (panel of 3)" )"
