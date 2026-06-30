@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""huggingface/conductor — local OpenRouter-Fusion-style orchestrator.
+"""huggingface/open-fusion — local OpenRouter-Fusion-style orchestrator.
 
-When the selected model is `huggingface/conductor`, this proxy runs the
+When the selected model is `huggingface/open-fusion`, this proxy runs the
 OpenRouter Fusion pipeline: it fans the prompt out to a panel of diverse models
 in parallel, an analyst model reads every panel response and produces a
 structured analysis (consensus, contradictions, partial coverage, unique
@@ -10,7 +10,7 @@ in that analysis. Two synthesis stages — not one — is what lets a panel of
 budget models surpass a single frontier model.
 
 Speaks the Anthropic Messages API (`/v1/messages`), since Claude Code is
-configured with ANTHROPIC_BASE_URL pointing here. Non-conductor requests are
+configured with ANTHROPIC_BASE_URL pointing here. Non-open-fusion requests are
 proxied through unchanged, with HTML error pages converted to clean Anthropic
 errors so the client never hangs on an unparseable body.
 """
@@ -28,28 +28,28 @@ try:
     import uvicorn
 except ImportError as e:  # pragma: no cover
     print(
-        f"hf-conductor proxy: missing dependency ({e}).\n"
+        f"hf-open-fusion proxy: missing dependency ({e}).\n"
         "Install with:  pip install fastapi uvicorn httpx",
         file=sys.stderr,
     )
     sys.exit(1)
 
 logging.basicConfig(
-    level=os.environ.get("HF_CONDUCTOR_LOG_LEVEL", "INFO"),
+    level=os.environ.get("HF_OPEN_FUSION_LOG_LEVEL", "INFO"),
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
-logger = logging.getLogger("hf-conductor")
+logger = logging.getLogger("hf-open-fusion")
 
 app = FastAPI()
 
 HF_ROUTER = "https://router.huggingface.co"
-CONDUCTOR_ID = "huggingface/conductor"
-PORT = int(os.environ.get("HF_CONDUCTOR_PORT", "8080"))
-READ_TIMEOUT = float(os.environ.get("HF_CONDUCTOR_READ_TIMEOUT", "120"))
+OPEN_FUSION_ID = "huggingface/open-fusion"
+PORT = int(os.environ.get("HF_OPEN_FUSION_PORT", "8080"))
+READ_TIMEOUT = float(os.environ.get("HF_OPEN_FUSION_READ_TIMEOUT", "120"))
 # Streaming judges (reasoning models) can sit silent for a while during the
 # thinking phase before emitting text. Give the relayed stream headroom so a
 # long gap between SSE events doesn't trip the read timeout and abort mid-stream.
-STREAM_READ_TIMEOUT = float(os.environ.get("HF_CONDUCTOR_STREAM_TIMEOUT", "600"))
+STREAM_READ_TIMEOUT = float(os.environ.get("HF_OPEN_FUSION_STREAM_TIMEOUT", "600"))
 
 # OpenRouter Fusion pipeline:
 #   panel      -> diverse capable models answer the original request in parallel
@@ -66,13 +66,13 @@ STREAM_READ_TIMEOUT = float(os.environ.get("HF_CONDUCTOR_STREAM_TIMEOUT", "600")
 # (two stages, one model). A non-reasoning judge streams visible text
 # immediately; a reasoning judge burns its token budget on hidden thinking
 # blocks. Split analyst/synth into two different models with
-# HF_CONDUCTOR_ANALYST / HF_CONDUCTOR_SYNTH if you want cross-family checking.
+# HF_OPEN_FUSION_ANALYST / HF_OPEN_FUSION_SYNTH if you want cross-family checking.
 #
 # Three presets mirror the three Fusion presets on OpenRouter's Fusion page
 # (general-high / general-budget / general-fast): Quality, Budget, Speed. Each
 # is a 3-model diverse panel; the panel composition changes, the panel SIZE
 # stays 3 (matches OpenRouter's three-member panels). A launcher-selectable
-# preset writes the chosen panel into HF_CONDUCTOR_PANEL so the proxy needs no
+# preset writes the chosen panel into HF_OPEN_FUSION_PANEL so the proxy needs no
 # preset awareness of its own.
 PRESETS = {
     # 🏆 Quality — strong, diverse frontier panel for best synthesis. Different
@@ -87,25 +87,25 @@ PRESETS = {
 }
 DEFAULT_PANEL = PRESETS["speed"]  # Speed is the no-surprise default (fast + cheap).
 DEFAULT_PRESET = "speed"
-PRESET = os.environ.get("HF_CONDUCTOR_PRESET", "").strip().lower()
+PRESET = os.environ.get("HF_OPEN_FUSION_PRESET", "").strip().lower()
 if PRESET and PRESET in PRESETS:
     DEFAULT_PANEL = PRESETS[PRESET]
 DEFAULT_ANALYST = "MiniMaxAI/MiniMax-M3"
 DEFAULT_SYNTH = "MiniMaxAI/MiniMax-M3"
-PANEL = [m.strip() for m in os.environ.get("HF_CONDUCTOR_PANEL", DEFAULT_PANEL).split(",") if m.strip()]
-# Legacy compat: a v0.3 HF_CONDUCTOR_JUDGE set both stages to one model. We keep
+PANEL = [m.strip() for m in os.environ.get("HF_OPEN_FUSION_PANEL", DEFAULT_PANEL).split(",") if m.strip()]
+# Legacy compat: a v0.3 HF_OPEN_FUSION_JUDGE set both stages to one model. We keep
 # that behavior — it's the blog's "fuse with itself" default — while letting the
 # two new vars split analyst/synth into different models.
-_LEGACY_JUDGE = os.environ.get("HF_CONDUCTOR_JUDGE", "")
-ANALYST = os.environ.get("HF_CONDUCTOR_ANALYST", _LEGACY_JUDGE or DEFAULT_ANALYST)
-SYNTH = os.environ.get("HF_CONDUCTOR_SYNTH", _LEGACY_JUDGE or DEFAULT_SYNTH)
-PANEL_TIMEOUT = float(os.environ.get("HF_CONDUCTOR_PANEL_TIMEOUT", "45"))
+_LEGACY_JUDGE = os.environ.get("HF_OPEN_FUSION_JUDGE", "")
+ANALYST = os.environ.get("HF_OPEN_FUSION_ANALYST", _LEGACY_JUDGE or DEFAULT_ANALYST)
+SYNTH = os.environ.get("HF_OPEN_FUSION_SYNTH", _LEGACY_JUDGE or DEFAULT_SYNTH)
+PANEL_TIMEOUT = float(os.environ.get("HF_OPEN_FUSION_PANEL_TIMEOUT", "45"))
 # Reasoning judges (e.g. GLM-5.2) spend tokens on hidden thinking blocks before
 # emitting the final text, so keep the budgets generous or the answer is empty.
-PANEL_MAX_TOKENS = int(os.environ.get("HF_CONDUCTOR_PANEL_MAX_TOKENS", "4096"))
-ANALYST_MAX_TOKENS = int(os.environ.get("HF_CONDUCTOR_ANALYST_MAX_TOKENS", "3072"))
-SYNTH_MAX_TOKENS = int(os.environ.get("HF_CONDUCTOR_JUDGE_MAX_TOKENS", "16384"))
-# Keep HF_CONDUCTOR_JUDGE_MAX_TOKENS as the documented knob (above). v0.3 users
+PANEL_MAX_TOKENS = int(os.environ.get("HF_OPEN_FUSION_PANEL_MAX_TOKENS", "4096"))
+ANALYST_MAX_TOKENS = int(os.environ.get("HF_OPEN_FUSION_ANALYST_MAX_TOKENS", "3072"))
+SYNTH_MAX_TOKENS = int(os.environ.get("HF_OPEN_FUSION_JUDGE_MAX_TOKENS", "16384"))
+# Keep HF_OPEN_FUSION_JUDGE_MAX_TOKENS as the documented knob (above). v0.3 users
 # who set it keep getting the synthesizer budget they tuned.
 
 HOP_BY_HOP = {
@@ -124,14 +124,14 @@ HOP_BY_HOP = {
 REQUEST_TIMEOUT = httpx.Timeout(connect=10.0, read=READ_TIMEOUT, write=120.0, pool=10.0)
 STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=STREAM_READ_TIMEOUT, write=120.0, pool=10.0)
 
-# The conductor's panel can't see the panel/judge tool calls, so there's no
+# The open-fusion panel can't see the panel/judge tool calls, so there's no
 # contamination surface to block on this side. But the OpenRouter Fusion post
 # flagged a real risk — panel models with web access found their eval rubric
 # online. If you wire server-side tools onto the panel later (web_search /
 # web_fetch), exclude the domains that host anything you don't want the panel
 # reading (benchmark rubrics, the user's own answer keys, etc.). Parsed once at
 # import; empty by default so it's a no-op until you need it.
-_EXCLUDE_DOMAINS_RAW = os.environ.get("HF_CONDUCTOR_EXCLUDE_DOMAINS", "")
+_EXCLUDE_DOMAINS_RAW = os.environ.get("HF_OPEN_FUSION_EXCLUDE_DOMAINS", "")
 EXCLUDE_DOMAINS = [d.strip().lower() for d in _EXCLUDE_DOMAINS_RAW.split(",") if d.strip()]
 
 
@@ -363,7 +363,7 @@ async def _run_analysis(client, bearer, messages, system, panel_outputs):
     return await _stream_to_text(client, bearer, body, timeout=READ_TIMEOUT)
 
 
-async def _conductor(request, body):
+async def _open_fusion(request, body):
     bearer = _bearer(request)
     messages = body.get("messages", [])
     system = body.get("system")
@@ -379,15 +379,15 @@ async def _conductor(request, body):
     if want_stream:
         client = httpx.AsyncClient()
         try:
-            logger.info("conductor: fanning out to panel=%s", PANEL)
+            logger.info("open-fusion: fanning out to panel=%s", PANEL)
             panel_outputs = await _run_panel(
                 client, bearer, messages, system, max_tokens=PANEL_MAX_TOKENS
             )
             ok = [m for m, t in panel_outputs if t]
-            logger.info("conductor: panel responded %d/%d", len(ok), len(PANEL))
+            logger.info("open-fusion: panel responded %d/%d", len(ok), len(PANEL))
 
             analysis = await _run_analysis(client, bearer, messages, system, panel_outputs)
-            logger.info("conductor: analysis %s -> synth=%s", "ok" if analysis else "failed", SYNTH)
+            logger.info("open-fusion: analysis %s -> synth=%s", "ok" if analysis else "failed", SYNTH)
 
             synth_messages, synth_system = _build_synth_messages(
                 messages, system, panel_outputs, analysis
@@ -405,26 +405,26 @@ async def _conductor(request, body):
 
             resp = await _forward_once(client, request, synth_body, timeout=STREAM_TIMEOUT)
             if resp is not None and resp.status_code == 200 and "text/html" not in resp.headers.get("content-type", ""):
-                logger.info("conductor: streaming synthesizer")
+                logger.info("open-fusion: streaming synthesizer")
                 return _stream(resp, client=client, label="synth")
             if resp is not None:
                 await resp.aclose()
             await client.aclose()
-            return _anthropic_error(f"conductor: synthesizer {SYNTH} failed to stream.")
+            return _anthropic_error(f"open-fusion: synthesizer {SYNTH} failed to stream.")
         except Exception as e:  # noqa: BLE001
             await client.aclose()
-            return _anthropic_error(f"conductor: orchestration error: {type(e).__name__}: {e}")
+            return _anthropic_error(f"open-fusion: orchestration error: {type(e).__name__}: {e}")
 
     async with httpx.AsyncClient() as client:
-        logger.info("conductor: fanning out to panel=%s", PANEL)
+        logger.info("open-fusion: fanning out to panel=%s", PANEL)
         panel_outputs = await _run_panel(
             client, bearer, messages, system, max_tokens=PANEL_MAX_TOKENS
         )
         ok = [m for m, t in panel_outputs if t]
-        logger.info("conductor: panel responded %d/%d", len(ok), len(PANEL))
+        logger.info("open-fusion: panel responded %d/%d", len(ok), len(PANEL))
 
         analysis = await _run_analysis(client, bearer, messages, system, panel_outputs)
-        logger.info("conductor: analysis %s -> synth=%s", "ok" if analysis else "failed", SYNTH)
+        logger.info("open-fusion: analysis %s -> synth=%s", "ok" if analysis else "failed", SYNTH)
 
         synth_messages, synth_system = _build_synth_messages(
             messages, system, panel_outputs, analysis
@@ -442,13 +442,13 @@ async def _conductor(request, body):
 
         text = await _stream_to_text(client, bearer, synth_body, timeout=READ_TIMEOUT)
         if text is None:
-            return _anthropic_error(f"conductor: synthesizer {SYNTH} failed to respond.")
+            return _anthropic_error(f"open-fusion: synthesizer {SYNTH} failed to respond.")
         return JSONResponse(
             {
-                "id": "msg_conductor",
+                "id": "msg_open_fusion",
                 "type": "message",
                 "role": "assistant",
-                "model": CONDUCTOR_ID,
+                "model": OPEN_FUSION_ID,
                 "content": [{"type": "text", "text": text}],
                 "stop_reason": "end_turn",
                 "stop_sequences": synth_body.get("stop_sequences", []),
@@ -462,7 +462,7 @@ async def _conductor(request, body):
 async def health():
     return {
         "ok": True,
-        "conductor": "fusion",
+        "open_fusion": "fusion",
         "preset": PRESET or DEFAULT_PRESET,
         "panel": PANEL,
         "analyst": ANALYST,
@@ -478,12 +478,12 @@ async def messages(request: Request):
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
-        return _anthropic_error("conductor: could not parse request body as JSON", 400)
+        return _anthropic_error("open-fusion: could not parse request body as JSON", 400)
 
-    if body.get("model") == CONDUCTOR_ID:
-        return await _conductor(request, body)
+    if body.get("model") == OPEN_FUSION_ID:
+        return await _open_fusion(request, body)
 
-    # Non-conductor model: forward once; convert HTML errors so client never hangs.
+    # Non-open-fusion model: forward once; convert HTML errors so client never hangs.
     # Client stays alive for the streamed response (closed by _stream's generator).
     client = httpx.AsyncClient()
     resp = await _forward_once(client, request, body)
@@ -492,7 +492,7 @@ async def messages(request: Request):
     if resp is not None:
         await resp.aclose()
     await client.aclose()
-    return _anthropic_error(f"conductor: upstream provider failed for {body.get('model')}.")
+    return _anthropic_error(f"open-fusion: upstream provider failed for {body.get('model')}.")
 
 
 @app.api_route(

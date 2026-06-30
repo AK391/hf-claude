@@ -1,6 +1,6 @@
 {
   "name": "hf-claude",
-  "description": "Launch Claude Code with Hugging Face Inference Providers (with optional huggingface/conductor Fusion-style orchestrator)",
+  "description": "Launch Claude Code with Hugging Face Inference Providers (with optional huggingface/open-fusion Fusion-style orchestrator)",
   "entrypoint": "hf-claude",
   "version": "0.5.0",
   "license": "Apache-2.0",
@@ -11,7 +11,7 @@
     "claude"
   ],
   "optional_requires": {
-    "python3": "required only when using the huggingface/conductor resilient orchestrator"
+    "python3": "required only when using the huggingface/open-fusion resilient orchestrator"
   },
   "env": {
     "HF_TOKEN": "Hugging Face user token used to authenticate with Inference Providers"

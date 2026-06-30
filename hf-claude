@@ -7,14 +7,14 @@ set -euo pipefail
 
 # Parse wrapper flags, forwarding everything else to `claude`.
 #   --bill-to <org> / --bill-to=<org>  bill inference to a HF org (X-HF-Bill-To)
-#   --conductor                        auto-select the huggingface/conductor
+#   --open-fusion                        auto-select the huggingface/open-fusion
 #                                      Fusion-style orchestrator (skip the menu)
 #   --all                              search the full Hub model catalog
 #                                      (~17k text-generation models) instead of
 #                                      opening the curated router list first
 # Falls back to $HF_BILL_TO when the flag is absent.
 BILL_TO="${HF_BILL_TO:-}"
-USE_CONDUCTOR=0
+USE_OPEN_FUSION=0
 HUB_SEARCH="${HF_CLAUDE_ALL:-0}"
 CLAUDE_ARGS=()
 while [[ $# -gt 0 ]]; do
@@ -29,7 +29,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --bill-to=*) BILL_TO="${1#*=}"; shift ;;
-    --conductor) USE_CONDUCTOR=1; shift ;;
+    --open-fusion) USE_OPEN_FUSION=1; shift ;;
     --all) HUB_SEARCH=1; shift ;;
     *) CLAUDE_ARGS+=("$1"); shift ;;
   esac
@@ -282,37 +282,37 @@ _filter_menu() {
 MODEL_DATA="$(curl -fsS "https://router.huggingface.co/v1/models" \
   -H "Authorization: Bearer ${HF_TOKEN}")"
 
-# huggingface/conductor is a local Fusion-style orchestrator: it fans the prompt
+# huggingface/open-fusion is a local Fusion-style orchestrator: it fans the prompt
 # out to a panel of diverse models in parallel, an analyst produces structured
 # analysis of their outputs, and a synthesizer streams one unified answer. It
 # runs as a tiny local proxy; selecting it from the menu launches the proxy and
-# points Claude Code at it. See hf_conductor_proxy.py.
-CONDUCTOR_ID="huggingface/conductor"
-# Friendly menu label — the bare id gives no hint at what the conductor does, so
-# prepend the HF 🤗 and a one-line description. We map it back to CONDUCTOR_ID
+# points Claude Code at it. See hf_open_fusion.py.
+OPEN_FUSION_ID="huggingface/open-fusion"
+# Friendly menu label — the bare id gives no hint at what the open-fusion proxy does, so
+# prepend the HF 🤗 and a one-line description. We map it back to OPEN_FUSION_ID
 # right after the menu resolves, so the rest of the script only ever sees the id.
-CONDUCTOR_MENU_LABEL="🤗 huggingface/conductor — Fusion-style orchestrator (panel → analyst → synthesis)"
-CONDUCTOR_PROXY="${HF_CONDUCTOR_PROXY:-}"
+OPEN_FUSION_MENU_LABEL="🤗 huggingface/open-fusion — Fusion-style orchestrator (panel → analyst → synthesis)"
+OPEN_FUSION_PROXY="${HF_OPEN_FUSION_PROXY:-}"
 
-# Print a short explainer about what the conductor is, then wait for a keypress.
-# Skipped when HF_CONDUCTOR_SKIP_EXPLAINER=1, or when stderr isn't a TTY (so
+# Print a short explainer about what Open Fusion is, then wait for a keypress.
+# Skipped when HF_OPEN_FUSION_SKIP_EXPLAINER=1, or when stderr isn't a TTY (so
 # non-interactive / automated runs aren't blocked). Cancel with Ctrl-C before
 # any key to abort without starting the proxy.
 #
 # $1 = preset name (quality|budget|speed|custom), $2 = comma-joined panel,
 # $3 = comma-joined judge (analyst,synthesizer). Pulled live from the proxy's
 # /health so the screen reflects the panel that will actually run.
-_conductor_explainer() {
-  [[ "${HF_CONDUCTOR_SKIP_EXPLAINER:-0}" == "1" ]] && return 0
+_open_fusion_explainer() {
+  [[ "${HF_OPEN_FUSION_SKIP_EXPLAINER:-0}" == "1" ]] && return 0
   [[ -t 2 ]] || return 0
   local preset="${1:-?}" panel="${2:-?}" judge="${3:-?}"
   local panel_pretty judge_pretty
   panel_pretty="$(printf '%s\n' "$panel" | tr ',' '\n' | sed 's/^/      • /')"
   judge_pretty="$(printf '%s\n' "$judge" | tr ',' '\n' | sed 's/^/      • /')"
   cat >&2 <<EOF
-🤗  huggingface/conductor — OpenRouter Fusion-style orchestrator
+🤗  huggingface/open-fusion — OpenRouter Fusion-style orchestrator
 
-    Instead of one model answering your prompt, the conductor runs the Fusion
+    Instead of one model answering your prompt, Open Fusion runs the Fusion
     pipeline that OpenRouter found surpasses single frontier models:
 
       1. PANEL      — your prompt is sent to several diverse models in parallel
@@ -331,7 +331,7 @@ ${judge_pretty}
     Cost: a turn is billed as (panel tokens) + (analyst tokens) + (synthesis
     tokens), against your HF token / --bill-to org.
 
-    Logs: /tmp/hf-conductor.log   •   Proxy: 127.0.0.1:8080
+    Logs: /tmp/hf-open-fusion.log   •   Proxy: 127.0.0.1:8080
 
   Press Enter to continue · Ctrl-C to cancel
 EOF
@@ -342,31 +342,31 @@ EOF
   echo "" >&2
 }
 
-_find_conductor_proxy() {
+_find_open_fusion_proxy() {
   # Explicit override wins; otherwise look next to this script, then on PATH.
-  if [[ -n "$CONDUCTOR_PROXY" ]]; then
-    [[ -f "$CONDUCTOR_PROXY" ]] && { echo "$CONDUCTOR_PROXY"; return 0; }
+  if [[ -n "$OPEN_FUSION_PROXY" ]]; then
+    [[ -f "$OPEN_FUSION_PROXY" ]] && { echo "$OPEN_FUSION_PROXY"; return 0; }
     return 1
   fi
   local here
-  here="$(cd "$(dirname "$0")" && pwd)/hf_conductor_proxy.py"
+  here="$(cd "$(dirname "$0")" && pwd)/hf_open_fusion.py"
   [[ -f "$here" ]] && { echo "$here"; return 0; }
-  command -v hf_conductor_proxy.py >/dev/null 2>&1 && { command -v hf_conductor_proxy.py; return 0; }
+  command -v hf_open_fusion.py >/dev/null 2>&1 && { command -v hf_open_fusion.py; return 0; }
   return 1
 }
 
 SEARCH_HUB_ENTRY="🔍 Search the full Hub catalog…"
 MODEL_ORIGIN="router"
 
-if [[ "$USE_CONDUCTOR" == "1" ]]; then
-  MODEL="$CONDUCTOR_ID"
-  MODEL_ORIGIN="conductor"
+if [[ "$USE_OPEN_FUSION" == "1" ]]; then
+  MODEL="$OPEN_FUSION_ID"
+  MODEL_ORIGIN="open-fusion"
 elif [[ "$HUB_SEARCH" == "1" ]]; then
   # --all: open straight into the Hub search prompt. Cancel falls back to the
   # curated router list so the user is never left with no way to pick a model.
   MODEL="$(_hub_search)"
   if [[ -z "$MODEL" ]]; then
-    MODEL="$(printf '%s\n' "$CONDUCTOR_MENU_LABEL" \
+    MODEL="$(printf '%s\n' "$OPEN_FUSION_MENU_LABEL" \
       | cat - <(echo "$MODEL_DATA" | jq -r '.data[].id') \
       | pick "Model: " "Hugging Face Inference Providers - Select Model")"
   else
@@ -374,8 +374,8 @@ elif [[ "$HUB_SEARCH" == "1" ]]; then
   fi
 else
   # Default: curated router list with a search entry prepended alongside the
-  # conductor entry, so the full ~17k Hub catalog is one selection away.
-  MODEL="$(printf '%s\n' "$SEARCH_HUB_ENTRY" "$CONDUCTOR_MENU_LABEL" \
+  # Open Fusion entry, so the full ~17k Hub catalog is one selection away.
+  MODEL="$(printf '%s\n' "$SEARCH_HUB_ENTRY" "$OPEN_FUSION_MENU_LABEL" \
     | cat - <(echo "$MODEL_DATA" | jq -r '.data[].id') \
     | pick "Model: " "Hugging Face Inference Providers - Select Model")"
   if [[ "$MODEL" == "$SEARCH_HUB_ENTRY" ]]; then
@@ -389,69 +389,85 @@ else
 fi
 
 # The menu shows the friendly 🤗 label; collapse it back to the bare id so the
-# rest of the script (provider routing, MODEL_STRING, conductor startup) only
-# ever compares against CONDUCTOR_ID.
-[[ "$MODEL" == "$CONDUCTOR_MENU_LABEL" ]] && MODEL="$CONDUCTOR_ID"
+# rest of the script (provider routing, MODEL_STRING, open-fusion startup) only
+# ever compares against OPEN_FUSION_ID.
+[[ "$MODEL" == "$OPEN_FUSION_MENU_LABEL" ]] && MODEL="$OPEN_FUSION_ID"
 
 if [[ -z "$MODEL" ]]; then
   echo "No model selected"
   exit 1
 fi
 
-if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
+if [[ "$MODEL" == "$OPEN_FUSION_ID" ]]; then
   # Three presets mirror OpenRouter Fusion's three (general-high / -budget /
   # -fast): Quality, Budget, Speed. Each is a fixed-size (3) diverse panel. The
-  # panel composition changes, the size stays 3. HF_CONDUCTOR_PRESET set in the
+  # panel composition changes, the size stays 3. HF_OPEN_FUSION_PRESET set in the
   # env skips the picker; so does any non-interactive run (defaulting to Speed,
-  # which keeps --conductor's "skip the menu" promise).
-  CONDUCTOR_PRESET="${HF_CONDUCTOR_PRESET:-}"
-  if [[ -z "$CONDUCTOR_PRESET" && -t 2 ]]; then
-    CONDUCTOR_PRESET="$(printf '%s\n' \
+  # which keeps --open-fusion's "skip the menu" promise).
+  OPEN_FUSION_PRESET="${HF_OPEN_FUSION_PRESET:-}"
+  if [[ -z "$OPEN_FUSION_PRESET" && -t 2 ]]; then
+    OPEN_FUSION_PRESET="$(printf '%s\n' \
       "quality  🏆 — strongest panel (GLM-5.2, DeepSeek-V3, Kimi-K2.6)" \
       "budget   💰 — cheap-but-capable (Ornith-1.0-35B, Qwen3.6-35B-A3B, gemma-4-31B)" \
       "speed    ⚡ — fast small panel (Qwen2.5-7B, Llama-3.1-8B, Olmo-3-7B)" \
-      | pick "Preset: " "huggingface/conductor — Fusion preset (panel of 3)" )"
+      | pick "Preset: " "huggingface/open-fusion — Fusion preset (panel of 3)" )"
     # The picker returns the whole line; take the first whitespace-delimited token.
-    CONDUCTOR_PRESET="${CONDUCTOR_PRESET%% *}"
+    OPEN_FUSION_PRESET="${OPEN_FUSION_PRESET%% *}"
   fi
-  [[ -z "$CONDUCTOR_PRESET" ]] && CONDUCTOR_PRESET="speed"
-  case "$CONDUCTOR_PRESET" in
+  [[ -z "$OPEN_FUSION_PRESET" ]] && OPEN_FUSION_PRESET="speed"
+  case "$OPEN_FUSION_PRESET" in
     quality|budget|speed) : ;;  # valid
-    *) echo "Unknown preset: ${CONDUCTOR_PRESET} (use quality|budget|speed)" >&2; exit 1 ;;
+    *) echo "Unknown preset: ${OPEN_FUSION_PRESET} (use quality|budget|speed)" >&2; exit 1 ;;
   esac
-  export HF_CONDUCTOR_PRESET="$CONDUCTOR_PRESET"
+  export HF_OPEN_FUSION_PRESET="$OPEN_FUSION_PRESET"
 
-  PROXY_SCRIPT="$(_find_conductor_proxy || true)"
+  PROXY_SCRIPT="$(_find_open_fusion_proxy || true)"
   if [[ -z "$PROXY_SCRIPT" ]]; then
-    echo "Error: selected huggingface/conductor but hf_conductor_proxy.py was not found." >&2
-    echo "       Set HF_CONDUCTOR_PROXY=/path/to/hf_conductor_proxy.py or install it next to this script." >&2
+    echo "Error: selected huggingface/open-fusion but hf_open_fusion.py was not found." >&2
+    echo "       Set HF_OPEN_FUSION_PROXY=/path/to/hf_open_fusion.py or install it next to this script." >&2
     exit 1
   fi
-  command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required to run the conductor proxy." >&2; exit 1; }
+  command -v python3 >/dev/null 2>&1 || { echo "Error: python3 is required to run the open-fusion proxy." >&2; exit 1; }
 
   # Prefer a venv bundled with the extension (deps isolated from system Python),
   # falling back to the system python3 if it happens to have the deps.
   HERE="$(cd "$(dirname "$0")" && pwd)"
   if [[ -x "$HERE/.venv/bin/python" ]]; then
     PY="$HERE/.venv/bin/python"
-  elif [[ -x "$HOME/.hf-conductor-venv/bin/python" ]]; then
-    PY="$HOME/.hf-conductor-venv/bin/python"
+  elif [[ -x "$HOME/.hf-open-fusion-venv/bin/python" ]]; then
+    PY="$HOME/.hf-open-fusion-venv/bin/python"
   else
     PY="python3"
   fi
 
-  PORT="${HF_CONDUCTOR_PORT:-8080}"
+  PORT="${HF_OPEN_FUSION_PORT:-8080}"
   # If a proxy is already running but on a DIFFERENT preset, restart it so the
   # chosen panel takes effect. A proxy picks its panel at import time from the
   # env, so a long-lived one won't see a preset change without a restart.
   _RUNNING_PRESET="$(curl -fsS "http://127.0.0.1:${PORT}/health" 2>/dev/null | jq -r '.preset // empty' 2>/dev/null || true)"
-  if [[ -n "$_RUNNING_PRESET" && "$_RUNNING_PRESET" != "$CONDUCTOR_PRESET" ]]; then
-    echo "→ switching conductor preset ${_RUNNING_PRESET} → ${CONDUCTOR_PRESET}; restarting proxy" >&2
-    # Kill the process bound to the port so the new preset can take the port.
-    # lsof is standard on macOS; fall back to a no-op kill if it's absent.
+  # Restart the running proxy unless it positively confirms it's on our preset.
+  # A proxy picks its panel at import time from the env, so a long-lived one
+  # won't see a preset change without a restart. Two cases force a restart:
+  #   (1) it reports a DIFFERENT preset than the one we just selected, or
+  #   (2) a proxy is up but reports NO preset — a stale/older build (or one
+  #       started before preset support) whose panel we can't verify. Reusing
+  #       it would silently run the wrong panel, so restart to be safe.
+  _RESTART=0
+  if [[ -n "$_RUNNING_PRESET" && "$_RUNNING_PRESET" != "$OPEN_FUSION_PRESET" ]]; then
+    echo "→ switching Open Fusion preset ${_RUNNING_PRESET} → ${OPEN_FUSION_PRESET}; restarting proxy" >&2
+    _RESTART=1
+  elif [[ -z "$_RUNNING_PRESET" ]] && curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
+    echo "→ running open-fusion proxy doesn't report a preset; restarting on ${OPEN_FUSION_PRESET}" >&2
+    _RESTART=1
+  fi
+  if [[ "$_RESTART" == "1" ]]; then
+    # Kill every process bound to the port so the new preset can take it. A
+    # stale proxy may be multiple processes (parent + workers); killing only
+    # the first leaves workers holding the port. lsof is standard on macOS;
+    # fall back to a no-op kill if it's absent.
     if command -v lsof >/dev/null 2>&1; then
-      _RUNNING_PID="$(lsof -ti tcp:${PORT} 2>/dev/null | head -1 || true)"
-      [[ -n "$_RUNNING_PID" ]] && kill "$_RUNNING_PID" 2>/dev/null || true
+      _RUNNING_PIDS="$(lsof -ti tcp:${PORT} 2>/dev/null || true)"
+      [[ -n "$_RUNNING_PIDS" ]] && kill $_RUNNING_PIDS 2>/dev/null || true
     fi
     # Wait for the old proxy to release the port.
     for _ in $(seq 1 50); do
@@ -461,19 +477,19 @@ if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
   fi
   # Reuse a running proxy on the port if one is already listening (and matched).
   if ! curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
-    echo "→ starting huggingface/conductor proxy on 127.0.0.1:${PORT} (preset: ${CONDUCTOR_PRESET})" >&2
-    "$PY" "$PROXY_SCRIPT" >/tmp/hf-conductor.log 2>&1 &
-    CONDUCTOR_PID=$!
+    echo "→ starting huggingface/open-fusion proxy on 127.0.0.1:${PORT} (preset: ${OPEN_FUSION_PRESET})" >&2
+    "$PY" "$PROXY_SCRIPT" >/tmp/hf-open-fusion.log 2>&1 &
+    OPEN_FUSION_PID=$!
     # Wait until it accepts /health, but give up after ~10s.
     for _ in $(seq 1 100); do
       if curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then break; fi
-      kill -0 "$CONDUCTOR_PID" 2>/dev/null || { echo "Error: conductor proxy exited during startup. See /tmp/hf-conductor.log" >&2; exit 1; }
+      kill -0 "$OPEN_FUSION_PID" 2>/dev/null || { echo "Error: open-fusion proxy exited during startup. See /tmp/hf-open-fusion.log" >&2; exit 1; }
       sleep 0.1
     done
   fi
   curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1 || {
-    echo "Error: conductor proxy is not responding on 127.0.0.1:${PORT}." >&2
-    echo "       Check /tmp/hf-conductor.log or set HF_CONDUCTOR_PORT." >&2
+    echo "Error: open-fusion proxy is not responding on 127.0.0.1:${PORT}." >&2
+    echo "       Check /tmp/hf-open-fusion.log or set HF_OPEN_FUSION_PORT." >&2
     exit 1
   }
   # Pull the resolved panel + judges from /health so the explainer shows the
@@ -482,11 +498,11 @@ if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
   _RESOLVED_PRESET="$(printf '%s' "$_HEALTH_JSON" | jq -r '.preset // "?"')"
   _RESOLVED_PANEL="$(printf '%s' "$_HEALTH_JSON" | jq -r '.panel | join(",")')"
   _RESOLVED_JUDGE="$(printf '%s' "$_HEALTH_JSON" | jq -r '[.analyst, .synthesizer] | join(",")')"
-  # Show what the conductor is before committing to it; cancel here (Ctrl-C) to
-  # bail out. HF_CONDUCTOR_SKIP_EXPLAINER=1 / non-TTY skips it.
-  _conductor_explainer "$_RESOLVED_PRESET" "$_RESOLVED_PANEL" "$_RESOLVED_JUDGE"
-  MODEL_STRING="$CONDUCTOR_ID"
-  PROVIDER="conductor"
+  # Show what Open Fusion is before committing to it; cancel here (Ctrl-C) to
+  # bail out. HF_OPEN_FUSION_SKIP_EXPLAINER=1 / non-TTY skips it.
+  _open_fusion_explainer "$_RESOLVED_PRESET" "$_RESOLVED_PANEL" "$_RESOLVED_JUDGE"
+  MODEL_STRING="$OPEN_FUSION_ID"
+  PROVIDER="open-fusion"
 else
   if [[ "$MODEL_ORIGIN" == "hub" ]]; then
     # A model chosen from the Hub catalog: the Hub /api/models response carries
@@ -521,12 +537,12 @@ echo "→ claude @ ${MODEL_STRING}" >&2
 
 export ANTHROPIC_API_KEY="$HF_TOKEN"
 export ANTHROPIC_AUTH_TOKEN="$HF_TOKEN"
-if [[ "$MODEL" == "$CONDUCTOR_ID" ]]; then
-  # Route Claude Code through the local conductor proxy instead of the router.
+if [[ "$MODEL" == "$OPEN_FUSION_ID" ]]; then
+  # Route Claude Code through the local open-fusion proxy instead of the router.
   export ANTHROPIC_BASE_URL="http://127.0.0.1:${PORT}"
-  export ANTHROPIC_DEFAULT_SONNET_MODEL="$CONDUCTOR_ID"
-  export ANTHROPIC_DEFAULT_HAIKU_MODEL="$CONDUCTOR_ID"
-  export ANTHROPIC_DEFAULT_OPUS_MODEL="$CONDUCTOR_ID"
+  export ANTHROPIC_DEFAULT_SONNET_MODEL="$OPEN_FUSION_ID"
+  export ANTHROPIC_DEFAULT_HAIKU_MODEL="$OPEN_FUSION_ID"
+  export ANTHROPIC_DEFAULT_OPUS_MODEL="$OPEN_FUSION_ID"
 else
   export ANTHROPIC_BASE_URL="https://router.huggingface.co"
   export ANTHROPIC_DEFAULT_SONNET_MODEL="$MODEL_STRING"

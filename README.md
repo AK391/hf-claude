@@ -84,9 +84,9 @@ export HF_BILL_TO=your-org-name
 hf claude
 ```
 
-## `huggingface/conductor` — OpenRouter Fusion-style orchestrator
+## `huggingface/open-fusion` — OpenRouter Fusion-style orchestrator
 
-`huggingface/conductor` is an orchestrator option at the top of the model menu
+`huggingface/open-fusion` is an orchestrator option at the top of the model menu
 that implements the [OpenRouter Fusion](https://openrouter.ai/blog/fusion)
 pattern. It runs the full Fusion pipeline rather than a single synthesis pass:
 
@@ -111,7 +111,7 @@ It runs as a tiny local proxy bundled with this extension.
 
 ### How it works
 
-1. Claude Code sends a request to `huggingface/conductor`.
+1. Claude Code sends a request to `huggingface/open-fusion`.
 2. The proxy fans the prompt out to every model in the panel **in parallel**
    (non-streaming, short max-tokens each).
 3. The analyst model receives the panel answers plus the original request and
@@ -129,16 +129,16 @@ It runs as a tiny local proxy bundled with this extension.
 Pick it from the top of the menu, or skip the menu entirely:
 
 ```bash
-hf claude --conductor
+hf claude --open-fusion
 ```
 
 The launcher starts the local proxy (default `127.0.0.1:8080`) — reusing one if
 already running — and points Claude Code at it. Logs go to
-`/tmp/hf-conductor.log`.
+`/tmp/hf-open-fusion.log`.
 
 ### Presets — Quality / Budget / Speed
 
-The conductor offers three presets, mirroring OpenRouter Fusion's three
+Open Fusion offers three presets, mirroring OpenRouter Fusion's three
 (`general-high` / `general-budget` / `general-fast`). Each is a **panel of 3**
 diverse models from different labs — the composition changes, the size stays 3
 (just like OpenRouter's three-member panels):
@@ -149,46 +149,46 @@ diverse models from different labs — the composition changes, the size stays 3
 | 💰 **budget** | `deepreinforce-ai/Ornith-1.0-35B`, `Qwen/Qwen3.6-35B-A3B`, `google/gemma-4-31B-it` | Cheap-but-capable diverse panel at a fraction of frontier cost |
 | ⚡ **speed** | `Qwen/Qwen2.5-7B`, `meta-llama/Llama-3.1-8B-Instruct`, `allenai/Olmo-3-7B-Instruct` | Lowest latency; the default |
 
-When you select the conductor interactively, a preset picker appears; the
+When you select Open Fusion interactively, a preset picker appears; the
 explainer screen then shows the exact 3 panel models + analyst/synthesizer the
 proxy will use this session. Pick a preset non-interactively with the
-`HF_CONDUCTOR_PRESET` env var:
+`HF_OPEN_FUSION_PRESET` env var:
 
 ```bash
-HF_CONDUCTOR_PRESET=quality hf claude --conductor
+HF_OPEN_FUSION_PRESET=quality hf claude --open-fusion
 ```
 
 If a proxy is already running on a *different* preset, the launcher restarts it
 so the chosen panel takes effect (the panel is resolved at proxy start).
 
-When you pick the `🤗 huggingface/conductor` entry from the menu, an explainer
+When you pick the `🤗 huggingface/open-fusion` entry from the menu, an explainer
 screen describes the Fusion pipeline and the resolved panel before Claude Code
 starts; press Enter to continue or Ctrl-C to cancel. Skip it with
-`HF_CONDUCTOR_SKIP_EXPLAINER=1` (or in any non-interactive run).
+`HF_OPEN_FUSION_SKIP_EXPLAINER=1` (or in any non-interactive run).
 
 ### Configuration (environment variables)
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `HF_CONDUCTOR_PRESET` | `speed` | One of `quality` / `budget` / `speed`; sets the 3-model panel. Ignored if `HF_CONDUCTOR_PANEL` is set explicitly |
-| `HF_CONDUCTOR_PANEL` | *(the preset's panel)* | Comma-separated panel models (overrides the preset; diverse, run in parallel) |
-| `HF_CONDUCTOR_ANALYST` | `MiniMaxAI/MiniMax-M3` | Model that produces structured analysis of the panel outputs |
-| `HF_CONDUCTOR_SYNTH` | `MiniMaxAI/MiniMax-M3` | Model that streams the final synthesized answer |
-| `HF_CONDUCTOR_JUDGE` | *(unset)* | Legacy: if set, becomes the default for both `HF_CONDUCTOR_ANALYST` and `HF_CONDUCTOR_SYNTH` (one model for both stages, as in v0.3) |
-| `HF_CONDUCTOR_PANEL_MAX_TOKENS` | `4096` | Max tokens per panel response |
-| `HF_CONDUCTOR_ANALYST_MAX_TOKENS` | `3072` | Max tokens for the analyst's structured analysis |
-| `HF_CONDUCTOR_JUDGE_MAX_TOKENS` | `16384` | Max tokens for the synthesizer's final answer |
-| `HF_CONDUCTOR_PANEL_TIMEOUT` | `45` | Seconds before a panel model is treated as failed |
-| `HF_CONDUCTOR_EXCLUDE_DOMAINS` | *(empty)* | Comma-separated domains to exclude from any future panel web tools (the Fusion blog's anti-contamination measure; no-op until you wire tools onto the panel) |
-| `HF_CONDUCTOR_SKIP_EXPLAINER` | `0` | Set to `1` to skip the pre-launch 🤗 explainer screen when selecting the conductor |
-| `HF_CONDUCTOR_PORT` | `8080` | Local proxy port |
-| `HF_CONDUCTOR_PROXY` | *(auto-detected)* | Path to `hf_conductor_proxy.py` |
-| `HF_CONDUCTOR_READ_TIMEOUT` | `120` | Seconds before the analyst / non-streaming synthesizer is treated as failed |
-| `HF_CONDUCTOR_STREAM_TIMEOUT` | `600` | Read timeout for the relayed synthesizer stream (headroom for reasoning gaps) |
-| `HF_CONDUCTOR_LOG_LEVEL` | `INFO` | Proxy log level |
+| `HF_OPEN_FUSION_PRESET` | `speed` | One of `quality` / `budget` / `speed`; sets the 3-model panel. Ignored if `HF_OPEN_FUSION_PANEL` is set explicitly |
+| `HF_OPEN_FUSION_PANEL` | *(the preset's panel)* | Comma-separated panel models (overrides the preset; diverse, run in parallel) |
+| `HF_OPEN_FUSION_ANALYST` | `MiniMaxAI/MiniMax-M3` | Model that produces structured analysis of the panel outputs |
+| `HF_OPEN_FUSION_SYNTH` | `MiniMaxAI/MiniMax-M3` | Model that streams the final synthesized answer |
+| `HF_OPEN_FUSION_JUDGE` | *(unset)* | Legacy: if set, becomes the default for both `HF_OPEN_FUSION_ANALYST` and `HF_OPEN_FUSION_SYNTH` (one model for both stages, as in v0.3) |
+| `HF_OPEN_FUSION_PANEL_MAX_TOKENS` | `4096` | Max tokens per panel response |
+| `HF_OPEN_FUSION_ANALYST_MAX_TOKENS` | `3072` | Max tokens for the analyst's structured analysis |
+| `HF_OPEN_FUSION_JUDGE_MAX_TOKENS` | `16384` | Max tokens for the synthesizer's final answer |
+| `HF_OPEN_FUSION_PANEL_TIMEOUT` | `45` | Seconds before a panel model is treated as failed |
+| `HF_OPEN_FUSION_EXCLUDE_DOMAINS` | *(empty)* | Comma-separated domains to exclude from any future panel web tools (the Fusion blog's anti-contamination measure; no-op until you wire tools onto the panel) |
+| `HF_OPEN_FUSION_SKIP_EXPLAINER` | `0` | Set to `1` to skip the pre-launch 🤗 explainer screen when selecting Open Fusion |
+| `HF_OPEN_FUSION_PORT` | `8080` | Local proxy port |
+| `HF_OPEN_FUSION_PROXY` | *(auto-detected)* | Path to `hf_open_fusion.py` |
+| `HF_OPEN_FUSION_READ_TIMEOUT` | `120` | Seconds before the analyst / non-streaming synthesizer is treated as failed |
+| `HF_OPEN_FUSION_STREAM_TIMEOUT` | `600` | Read timeout for the relayed synthesizer stream (headroom for reasoning gaps) |
+| `HF_OPEN_FUSION_LOG_LEVEL` | `INFO` | Proxy log level |
 
 > Note: this is a client-side orchestration layer. Requests are still
 > authenticated with your HF token and metered by the router against the panel,
-> analyst, and synthesizer models that actually serve each request, so a
-> conductor turn costs roughly (sum of panel tokens) + (analyst tokens) +
+> analyst, and synthesizer models that actually serve each request, so an
+> Open Fusion turn costs roughly (sum of panel tokens) + (analyst tokens) +
 > (synthesizer tokens).
