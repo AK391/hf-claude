@@ -283,15 +283,17 @@ MODEL_DATA="$(curl -fsS "https://router.huggingface.co/v1/models" \
   -H "Authorization: Bearer ${HF_TOKEN}")"
 
 # huggingface/open-fusion is a local Fusion-style orchestrator: it fans the prompt
-# out to a panel of diverse models in parallel, an analyst produces structured
-# analysis of their outputs, and a synthesizer streams one unified answer. It
-# runs as a tiny local proxy; selecting it from the menu launches the proxy and
-# points Claude Code at it. See hf_open_fusion.py.
+# out to a panel of diverse models in parallel, then a single judge reads every
+# panel answer, writes structured analysis, and streams the final unified answer
+# grounded in it — in one pass, as OpenRouter's Fusion blog describes. It runs as
+# a tiny local proxy; selecting it from the menu launches the proxy and points
+# Claude Code at it. See hf_open_fusion.py.
 OPEN_FUSION_ID="huggingface/open-fusion"
-# Friendly menu label — the bare id gives no hint at what the open-fusion proxy does, so
-# prepend the HF 🤗 and a one-line description. We map it back to OPEN_FUSION_ID
-# right after the menu resolves, so the rest of the script only ever sees the id.
-OPEN_FUSION_MENU_LABEL="🤗 huggingface/open-fusion — Fusion-style orchestrator (panel → analyst → synthesis)"
+# Friendly menu label — the picker shows the bare id (the post-selection
+# explainer screen describes the pipeline), so no inline description here. We
+# map the label back to OPEN_FUSION_ID right after the menu resolves, so the
+# rest of the script only ever sees the id.
+OPEN_FUSION_MENU_LABEL="huggingface/open-fusion"
 OPEN_FUSION_PROXY="${HF_OPEN_FUSION_PROXY:-}"
 
 # Print a short explainer about what Open Fusion is, then wait for a keypress.
@@ -300,36 +302,51 @@ OPEN_FUSION_PROXY="${HF_OPEN_FUSION_PROXY:-}"
 # any key to abort without starting the proxy.
 #
 # $1 = preset name (quality|budget|speed|custom), $2 = comma-joined panel,
-# $3 = comma-joined judge (analyst,synthesizer). Pulled live from the proxy's
-# /health so the screen reflects the panel that will actually run.
+# $3 = comma-joined judge (judge in one-call mode, or analyst,synthesizer in
+# two-stage), $4 = two_stage flag (1/0). Pulled live from the proxy's /health so
+# the screen reflects the panel that will actually run.
 _open_fusion_explainer() {
   [[ "${HF_OPEN_FUSION_SKIP_EXPLAINER:-0}" == "1" ]] && return 0
   [[ -t 2 ]] || return 0
-  local preset="${1:-?}" panel="${2:-?}" judge="${3:-?}"
-  local panel_pretty judge_pretty
+  local preset="${1:-?}" panel="${2:-?}" judge="${3:-?}" two_stage="${4:-0}"
+  local panel_pretty judge_pretty pipeline judge_label cost
   panel_pretty="$(printf '%s\n' "$panel" | tr ',' '\n' | sed 's/^/      • /')"
   judge_pretty="$(printf '%s\n' "$judge" | tr ',' '\n' | sed 's/^/      • /')"
+  if [[ "$two_stage" == "1" ]]; then
+    pipeline="      1. PANEL      — your prompt is sent to several diverse models in parallel
+      2. ANALYST    — a model reads every panel answer and writes structured
+                      analysis (consensus / contradictions / coverage / blind spots)
+      3. SYNTHESIS  — a model streams the final unified answer, grounded in that"
+    judge_label="Analyst + synthesizer (fuse the panel into the final answer)"
+    cost="Cost: a turn is billed as (panel tokens) + (analyst tokens) + (synthesis
+    tokens), against your HF token / --bill-to org."
+  else
+    pipeline="      1. PANEL   — your prompt is sent to several diverse models in parallel
+      2. JUDGE   — ONE model reads every panel answer, writes structured analysis
+                   (consensus / contradictions / coverage / blind spots), then
+                   streams the final unified answer grounded in it — in a single
+                   pass, as OpenRouter's Fusion blog describes"
+    judge_label="Judge (reads the panel, then writes the final answer — one pass)"
+    cost="Cost: a turn is billed as (panel tokens) + (judge tokens), against your
+    HF token / --bill-to org."
+  fi
   cat >&2 <<EOF
 🤗  huggingface/open-fusion — OpenRouter Fusion-style orchestrator
 
     Instead of one model answering your prompt, Open Fusion runs the Fusion
     pipeline that OpenRouter found surpasses single frontier models:
 
-      1. PANEL      — your prompt is sent to several diverse models in parallel
-      2. ANALYST    — a model reads every panel answer and writes structured
-                      analysis (consensus / contradictions / coverage / blind spots)
-      3. SYNTHESIS  — a model streams the final unified answer, grounded in that
+${pipeline}
 
     Preset: ${preset}   (panel size fixed at 3 — matches OpenRouter's Fusion)
 
     Panel (the 3 models that will answer in parallel):
 ${panel_pretty}
 
-    Analyst + synthesizer (fuse the panel into the final answer):
+    ${judge_label}:
 ${judge_pretty}
 
-    Cost: a turn is billed as (panel tokens) + (analyst tokens) + (synthesis
-    tokens), against your HF token / --bill-to org.
+    ${cost}
 
     Logs: /tmp/hf-open-fusion.log   •   Proxy: 127.0.0.1:8080
 
@@ -373,9 +390,11 @@ elif [[ "$HUB_SEARCH" == "1" ]]; then
     MODEL_ORIGIN="hub"
   fi
 else
-  # Default: curated router list with a search entry prepended alongside the
-  # Open Fusion entry, so the full ~17k Hub catalog is one selection away.
-  MODEL="$(printf '%s\n' "$SEARCH_HUB_ENTRY" "$OPEN_FUSION_MENU_LABEL" \
+  # Default: Open Fusion is the preselected (first) entry, with the Hub search
+  # entry and the curated router list below it. Open Fusion comes first so the
+  # picker highlights it by default; its explainer screen (shown after) describes
+  # the pipeline, so the picker line stays bare.
+  MODEL="$(printf '%s\n' "$OPEN_FUSION_MENU_LABEL" "$SEARCH_HUB_ENTRY" \
     | cat - <(echo "$MODEL_DATA" | jq -r '.data[].id') \
     | pick "Model: " "Hugging Face Inference Providers - Select Model")"
   if [[ "$MODEL" == "$SEARCH_HUB_ENTRY" ]]; then
@@ -407,7 +426,7 @@ if [[ "$MODEL" == "$OPEN_FUSION_ID" ]]; then
   OPEN_FUSION_PRESET="${HF_OPEN_FUSION_PRESET:-}"
   if [[ -z "$OPEN_FUSION_PRESET" && -t 2 ]]; then
     OPEN_FUSION_PRESET="$(printf '%s\n' \
-      "quality  🏆 — strongest panel (GLM-5.2, DeepSeek-V3, Kimi-K2.6)" \
+      "quality  🏆 — strongest panel (MiniMax-M3, DeepSeek-V3, Kimi-K2.6)" \
       "budget   💰 — cheap-but-capable (Ornith-1.0-35B, Qwen3.6-35B-A3B, gemma-4-31B)" \
       "speed    ⚡ — fast small panel (Qwen2.5-7B, Llama-3.1-8B, Olmo-3-7B)" \
       | pick "Preset: " "huggingface/open-fusion — Fusion preset (panel of 3)" )"
@@ -492,15 +511,21 @@ if [[ "$MODEL" == "$OPEN_FUSION_ID" ]]; then
     echo "       Check /tmp/hf-open-fusion.log or set HF_OPEN_FUSION_PORT." >&2
     exit 1
   }
-  # Pull the resolved panel + judges from /health so the explainer shows the
-  # exact 3 panel models + analyst/synthesizer the proxy will use this session.
+  # Pull the resolved panel + judge from /health so the explainer shows the
+  # exact 3 panel models + judge(s) the proxy will use this session. In one-call
+  # mode (default) that's a single judge; in two-stage mode it's analyst,synthesizer.
   _HEALTH_JSON="$(curl -fsS "http://127.0.0.1:${PORT}/health" 2>/dev/null || echo '{}')"
   _RESOLVED_PRESET="$(printf '%s' "$_HEALTH_JSON" | jq -r '.preset // "?"')"
   _RESOLVED_PANEL="$(printf '%s' "$_HEALTH_JSON" | jq -r '.panel | join(",")')"
-  _RESOLVED_JUDGE="$(printf '%s' "$_HEALTH_JSON" | jq -r '[.analyst, .synthesizer] | join(",")')"
+  _RESOLVED_TWO_STAGE="$(printf '%s' "$_HEALTH_JSON" | jq -r 'if .two_stage then "1" else "0" end')"
+  if [[ "$_RESOLVED_TWO_STAGE" == "1" ]]; then
+    _RESOLVED_JUDGE="$(printf '%s' "$_HEALTH_JSON" | jq -r '[.analyst, .synthesizer] | join(",")')"
+  else
+    _RESOLVED_JUDGE="$(printf '%s' "$_HEALTH_JSON" | jq -r '.judge // .analyst // "?"')"
+  fi
   # Show what Open Fusion is before committing to it; cancel here (Ctrl-C) to
   # bail out. HF_OPEN_FUSION_SKIP_EXPLAINER=1 / non-TTY skips it.
-  _open_fusion_explainer "$_RESOLVED_PRESET" "$_RESOLVED_PANEL" "$_RESOLVED_JUDGE"
+  _open_fusion_explainer "$_RESOLVED_PRESET" "$_RESOLVED_PANEL" "$_RESOLVED_JUDGE" "$_RESOLVED_TWO_STAGE"
   MODEL_STRING="$OPEN_FUSION_ID"
   PROVIDER="open-fusion"
 else
