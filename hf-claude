@@ -372,6 +372,47 @@ _find_open_fusion_proxy() {
   return 1
 }
 
+# Pick exactly 3 models for a custom Open Fusion panel from the curated router
+# list (the same list the main model picker uses). Each pick removes the chosen
+# model so the panel stays diverse — no duplicates, matching Fusion's diverse-
+# panel intent. Prints the 3 ids comma-joined on stdout (the format
+# HF_OPEN_FUSION_PANEL expects), or nothing on cancel / too few picked.
+_pick_custom_panel() {
+  local all_ids id i choice r
+  all_ids="$(echo "$MODEL_DATA" | jq -r '.data[].id' 2>/dev/null)"
+  if [[ -z "$all_ids" ]]; then
+    echo "hf-claude: no router models available to pick a custom panel." >&2
+    return 1
+  fi
+  local remaining=()
+  while IFS= read -r id; do remaining+=("$id"); done <<<"$all_ids"
+  local picked=()
+  for i in 1 2 3; do
+    choice="$(printf '%s\n' "${remaining[@]}" | pick "Model ${i}/3: " "Open Fusion custom panel — pick model ${i} of 3" || true)"
+    if [[ -z "$choice" ]]; then
+      echo "hf-claude: custom panel needs 3 models; cancelled at ${i}/3." >&2
+      return 1
+    fi
+    picked+=("$choice")
+    # Drop the chosen model so it can't be picked again (keep the panel diverse).
+    local new=()
+    for r in "${remaining[@]}"; do [[ "$r" != "$choice" ]] && new+=("$r"); done
+    if (( ${#new[@]} > 0 )); then
+      remaining=("${new[@]}")
+    else
+      remaining=()
+    fi
+    if (( ${#remaining[@]} == 0 && i < 3 )); then
+      echo "hf-claude: ran out of distinct models for a 3-model panel." >&2
+      return 1
+    fi
+  done
+  printf '%s' "${picked[0]}"
+  local j
+  for (( j=1; j<${#picked[@]}; j++ )); do printf ',%s' "${picked[j]}"; done
+  printf '\n'
+}
+
 SEARCH_HUB_ENTRY="🔍 Search the full Hub catalog…"
 MODEL_ORIGIN="router"
 
@@ -429,6 +470,7 @@ if [[ "$MODEL" == "$OPEN_FUSION_ID" ]]; then
       "quality  🏆 — strongest panel (MiniMax-M3, DeepSeek-V3, Kimi-K2.6)" \
       "budget   💰 — cheap-but-capable (Ornith-1.0-35B, Qwen3.6-35B-A3B, gemma-4-31B)" \
       "speed    ⚡ — fast small panel (Qwen2.5-7B, Llama-3.1-8B, Olmo-3-7B)" \
+      "custom   🎛️ — pick your own 3-model panel" \
       | pick "Preset: " "huggingface/open-fusion — Fusion preset (panel of 3)" )"
     # The picker returns the whole line; take the first whitespace-delimited token.
     OPEN_FUSION_PRESET="${OPEN_FUSION_PRESET%% *}"
@@ -436,9 +478,23 @@ if [[ "$MODEL" == "$OPEN_FUSION_ID" ]]; then
   [[ -z "$OPEN_FUSION_PRESET" ]] && OPEN_FUSION_PRESET="speed"
   case "$OPEN_FUSION_PRESET" in
     quality|budget|speed) : ;;  # valid
-    *) echo "Unknown preset: ${OPEN_FUSION_PRESET} (use quality|budget|speed)" >&2; exit 1 ;;
+    custom)
+      # User picks 3 models from the curated router list; the comma-joined ids go
+      # straight into HF_OPEN_FUSION_PANEL, which the proxy reads at import time.
+      if [[ -t 2 ]]; then
+        OPEN_FUSION_PANEL="$(_pick_custom_panel)" || {
+          echo "No custom panel selected; falling back to speed preset." >&2
+          OPEN_FUSION_PRESET="speed"
+        }
+      else
+        echo "Custom preset needs an interactive terminal; falling back to speed." >&2
+        OPEN_FUSION_PRESET="speed"
+      fi
+      ;;
+    *) echo "Unknown preset: ${OPEN_FUSION_PRESET} (use quality|budget|speed|custom)" >&2; exit 1 ;;
   esac
   export HF_OPEN_FUSION_PRESET="$OPEN_FUSION_PRESET"
+  [[ -n "${OPEN_FUSION_PANEL:-}" ]] && export HF_OPEN_FUSION_PANEL="$OPEN_FUSION_PANEL"
 
   PROXY_SCRIPT="$(_find_open_fusion_proxy || true)"
   if [[ -z "$PROXY_SCRIPT" ]]; then
@@ -464,16 +520,23 @@ if [[ "$MODEL" == "$OPEN_FUSION_ID" ]]; then
   # chosen panel takes effect. A proxy picks its panel at import time from the
   # env, so a long-lived one won't see a preset change without a restart.
   _RUNNING_PRESET="$(curl -fsS "http://127.0.0.1:${PORT}/health" 2>/dev/null | jq -r '.preset // empty' 2>/dev/null || true)"
+  _RUNNING_PANEL="$(curl -fsS "http://127.0.0.1:${PORT}/health" 2>/dev/null | jq -r '.panel | join(",")' 2>/dev/null || true)"
   # Restart the running proxy unless it positively confirms it's on our preset.
   # A proxy picks its panel at import time from the env, so a long-lived one
-  # won't see a preset change without a restart. Two cases force a restart:
+  # won't see a preset change without a restart. Cases that force a restart:
   #   (1) it reports a DIFFERENT preset than the one we just selected, or
   #   (2) a proxy is up but reports NO preset — a stale/older build (or one
   #       started before preset support) whose panel we can't verify. Reusing
   #       it would silently run the wrong panel, so restart to be safe.
+  #   (3) custom preset: two custom panels share the preset name "custom" but
+  #       run different models, so compare the actual panel too and restart
+  #       when the running panel isn't the one we just picked.
   _RESTART=0
   if [[ -n "$_RUNNING_PRESET" && "$_RUNNING_PRESET" != "$OPEN_FUSION_PRESET" ]]; then
     echo "→ switching Open Fusion preset ${_RUNNING_PRESET} → ${OPEN_FUSION_PRESET}; restarting proxy" >&2
+    _RESTART=1
+  elif [[ "$OPEN_FUSION_PRESET" == "custom" && -n "${OPEN_FUSION_PANEL:-}" && "$_RUNNING_PANEL" != "${OPEN_FUSION_PANEL}" ]]; then
+    echo "→ switching custom Open Fusion panel; restarting proxy" >&2
     _RESTART=1
   elif [[ -z "$_RUNNING_PRESET" ]] && curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
     echo "→ running open-fusion proxy doesn't report a preset; restarting on ${OPEN_FUSION_PRESET}" >&2
