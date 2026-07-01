@@ -78,15 +78,23 @@ STREAM_READ_TIMEOUT = float(os.environ.get("HF_OPEN_FUSION_STREAM_TIMEOUT", "600
 #
 # Three presets mirror the three Fusion presets on OpenRouter's Fusion page
 # (general-high / general-budget / general-fast): Quality, Budget, Speed. Each
-# is a 3-model diverse panel; the panel composition changes, the panel SIZE
-# stays 3 (matches OpenRouter's three-member panels). A launcher-selectable
-# preset writes the chosen panel into HF_OPEN_FUSION_PANEL so the proxy needs no
-# preset awareness of its own.
+# is a diverse panel; Budget and Speed stay at 3 members (matches OpenRouter's
+# three-member panels), while Quality carries a frontier anchor (GLM-5.2) so the
+# synthesis retains real frontier intelligence — Cognition's Devin Fusion blog
+# found keeping a frontier model in the mix is what preserves intelligence under
+# routing ("It retains real frontier intelligence rather than 'benchmark-score'
+# intelligence. By keeping a frontier model in the mix..."). A launcher-
+# selectable preset writes the chosen panel into HF_OPEN_FUSION_PANEL so the
+# proxy needs no preset awareness of its own.
 PRESETS = {
-    # 🏆 Quality — strong, diverse frontier panel for best synthesis. Different
-    # families (MiniMax / DeepSeek / Kimi) so they disagree productively and the
-    # analyst has real consensus/contradiction signal to work with.
-    "quality": "MiniMaxAI/MiniMax-M3,deepseek-ai/DeepSeek-V3,moonshotai/Kimi-K2.6",
+    # 🏆 Quality — strong, diverse frontier panel for best synthesis. GLM-5.2 is
+    # the frontier anchor (Cognition's Devin Fusion blog: keep a frontier model
+    # in the panel so synthesis retains real frontier intelligence, not
+    # benchmark intelligence); MiniMax-M3 and Kimi-K2.7-Code add family diversity
+    # so they disagree productively and the judge has real consensus/contradiction
+    # signal. GLM-5.2 is also the judge (one-call), so the frontier model both
+    # answers in the panel AND synthesizes — the blog's frontier-in-the-loop shape.
+    "quality": "zai-org/GLM-5.2,MiniMaxAI/MiniMax-M3,moonshotai/Kimi-K2.7-Code",
     # 💰 Budget — cheap-but-capable diverse panel, OpenRouter's "budget panel"
     # finding: this class beat individual frontier models at a fraction of cost.
     "budget": "deepreinforce-ai/Ornith-1.0-35B,Qwen/Qwen3.6-35B-A3B,google/gemma-4-31B-it",

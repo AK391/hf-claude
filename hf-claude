@@ -467,7 +467,7 @@ if [[ "$MODEL" == "$OPEN_FUSION_ID" ]]; then
   OPEN_FUSION_PRESET="${HF_OPEN_FUSION_PRESET:-}"
   if [[ -z "$OPEN_FUSION_PRESET" && -t 2 ]]; then
     OPEN_FUSION_PRESET="$(printf '%s\n' \
-      "quality  🏆 — strongest panel (MiniMax-M3, DeepSeek-V3, Kimi-K2.6)" \
+      "quality  🏆 — strongest panel (GLM-5.2 judge, panel: GLM-5.2, MiniMax-M3, Kimi-K2.7-Code)" \
       "budget   💰 — cheap-but-capable (Ornith-1.0-35B, Qwen3.6-35B-A3B, gemma-4-31B)" \
       "speed    ⚡ — fast small panel (Qwen2.5-7B, Llama-3.1-8B, Olmo-3-7B)" \
       "custom   🎛️ — pick your own 3-model panel" \
